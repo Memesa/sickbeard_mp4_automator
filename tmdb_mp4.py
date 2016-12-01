@@ -60,23 +60,20 @@ class tmdb_mp4:
     def writeTags(self, mp4Path, artwork=True, thumbnail=False):
         self.log.info("Tagging file: %s." % mp4Path)
         ext = os.path.splitext(mp4Path)[1][1:]
-        if ext not in valid_output_extensions:
+        if ext.lower() not in valid_output_extensions:
             self.log.error("File is not the correct format.")
             sys.exit()
 
         video = MP4(mp4Path)
-        try:
-            video.delete()
-        except IOError:
-            self.log.debug("Unable to clear original tags, attempting to proceed.")
-
-        video["\xa9nam"] = self.title  # Movie title
-        video["desc"] = self.shortdescription  # Short description
-        video["ldes"] = self.description  # Long description
-        video["\xa9day"] = self.date  # Year
-        video["stik"] = [9]  # Movie iTunes category
-        if self.HD is not None:
-            video["hdvd"] = self.HD
+        checktags = {
+            "\xa9nam": self.title,
+            "desc": self.shortdescription,
+            "ldes": self.description,
+            "\xa9day": self.date,
+            #"stik": 9,
+        }
+        #if self.HD is not None:
+        #    checktags["hdvd"] = self.HD
         if self.genre is not None:
             genre = None
             for g in self.genre:
@@ -85,35 +82,74 @@ class tmdb_mp4:
                     break
                 # else:
                     # genre += ", " + g['name']
-            video["\xa9gen"] = genre  # Genre(s)
-        video["----:com.apple.iTunes:iTunMOVI"] = self.xml  # XML - see xmlTags method
-        rating = self.rating()
-        if rating is not None:
-            video["----:com.apple.iTunes:iTunEXTC"] = rating
-
-        if artwork:
-            path = self.getArtwork(mp4Path)
-            if path is not None:
-                cover = open(path, 'rb').read()
-                if path.endswith('png'):
-                    video["covr"] = [MP4Cover(cover, MP4Cover.FORMAT_PNG)]  # png poster
-                else:
-                    video["covr"] = [MP4Cover(cover, MP4Cover.FORMAT_JPEG)]  # jpeg poster
-        if self.original:
-            video["\xa9too"] = "MDH:" + os.path.basename(self.original)
-        else:
-            video["\xa9too"] = "MDH:" + os.path.basename(mp4Path)
-
-        for i in range(3):
-            try:
-                self.log.info("Trying to write tags.")
-                video.save()
-                self.log.info("Tags written successfully.")
+            checktags["\xa9gen"] = genre  # Genre(s)
+            
+        ProcessTags = False
+        for keys, values in checktags.items():
+            if video.tags == None:
+                ProcessTags = True
                 break
-            except IOError as e:
-                self.log.info("Exception: %s" % e)
-                self.log.exception("There was a problem writing the tags. Retrying.")
-                time.sleep(5)
+            elif keys in video.tags:
+                if video.tags[keys] != [values]:
+                    self.log.debug(keys + " tag does not match and will be updated")
+                    ProcessTags = True
+            else:
+                self.log.debug(keys + " will be added")
+                ProcessTags = True
+        if not ProcessTags:
+            self.log.info("All MP4 tags match the original, skipping tagging.")
+        else:
+            try:
+                video.delete()
+            except IOError:
+                self.log.debug("Unable to clear original tags, attempting to proceed.")
+
+            video["\xa9nam"] = self.title  # Movie title
+            video["desc"] = self.shortdescription  # Short description
+            video["ldes"] = self.description  # Long description
+            video["\xa9day"] = self.date  # Year
+#           video["stik"] = [9]  # Movie iTunes category
+#           if self.HD is not None:
+#               video["hdvd"] = self.HD
+            if self.genre is not None:
+                genre = None
+                for g in self.genre:
+                    if genre is None:
+                        genre = g['name']
+                        break
+                    # else:
+                        # genre += ", " + g['name']
+                video["\xa9gen"] = genre  # Genre(s)
+#           video["----:com.apple.iTunes:iTunMOVI"] = self.xml  # XML - see xmlTags method
+#           rating = self.rating()
+#           if rating is not None:
+#               video["----:com.apple.iTunes:iTunEXTC"] = rating
+
+            if artwork:
+                path = self.getArtwork(mp4Path)
+                if path is not None:
+                    cover = open(path, 'rb').read()
+                    if path.endswith('png'):
+                        video["covr"] = [MP4Cover(cover, MP4Cover.FORMAT_PNG)]  # png poster
+                    else:
+                        video["covr"] = [MP4Cover(cover, MP4Cover.FORMAT_JPEG)]  # jpeg poster
+#           if self.original:
+#               video["\xa9too"] = "MDH:" + os.path.basename(self.original)
+#           else:
+#               video["\xa9too"] = "MDH:" + os.path.basename(mp4Path)
+
+            for i in range(3):
+                try:
+
+                    self.log.info("Trying to write tags.")
+                    video.save()
+                    self.log.info("Tags written successfully.")
+                    break
+
+                except IOError as e:
+                    self.log.info("Exception: %s" % e)
+                    self.log.exception("There was a problem writing the tags. Retrying.")
+                    time.sleep(5)
 
     def rating(self):
         ratings = {'G': '100',
