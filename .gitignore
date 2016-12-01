@@ -2,6 +2,9 @@
 ## sickbeard-mp4-automator
 #############################
 autoProcess.ini
+autoProcess.home.ini
+autoProcess.homePlex.ini
+autoProcess.homePlexMobile.ini
 
 #################
 ## Eclipse
