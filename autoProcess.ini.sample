@@ -55,6 +55,7 @@ permissions = 0777
 post-process = False
 pix-fmt =
 aac_adtstoasc = False
+h264Quality = 
 
 [CouchPotato]
 host = localhost

@@ -45,7 +45,7 @@ class ReadSettings:
                 log.exception("Sorry, your environment is not setup correctly for utf-8 support. Please fix your setup and try again")
                 sys.exit("Sorry, your environment is not setup correctly for utf-8 support. Please fix your setup and try again")
 
-        log.info(sys.executable)
+        log.debug(sys.executable)
 
         # Default settings for SickBeard
         sb_defaults = {'host': 'localhost',
@@ -334,6 +334,16 @@ class ReadSettings:
             except:
                 log.exception("Invalid video bitrate, defaulting to no video bitrate cap.")
                 self.vbitrate = None
+        
+        self.h264Quality = config.get(section, "h264Quality")
+        if self.h264Quality == '':
+            self.h264Quality = None
+        else:
+            try:
+                self.h264Quality = int(self.h264Quality)
+            except:
+                log.exception("Invalid h264 Quality, defaulting to none.")
+                self.h264Quality = None
 
         self.vwidth = config.get(section, "video-max-width")
         if self.vwidth == '':

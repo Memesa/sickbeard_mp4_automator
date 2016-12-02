@@ -35,7 +35,7 @@ def configure(api_key, language='en'):
     config['urls']['movie.trailers'] = "https://api.themoviedb.org/3/movie/%%s/trailers?api_key=%(apikey)s" % (config)
     config['urls']['movie.translations'] = "https://api.themoviedb.org/3/movie/%%s/translations?api_key=%(apikey)s" % (config)
     config['urls']['person.info'] = "https://api.themoviedb.org/3/person/%%s?api_key=%(apikey)s&append_to_response=images,credits" % (config)
-    config['urls']['latestmovie'] = "https://api.themoviedb.org/3/latest/movie?api_key=%(apikey)s" % (config)
+    config['urls']['latestmovie'] = "https://api.themoviedb.org/3/movie/latest?api_key=%(apikey)s" % (config)
     config['urls']['config'] = "https://api.themoviedb.org/3/configuration?api_key=%(apikey)s" % (config)
     config['urls']['request.token'] = "https://api.themoviedb.org/3/authentication/token/new?api_key=%(apikey)s" % (config)
     config['urls']['session.id'] = "https://api.themoviedb.org/3/authentication/session/new?api_key=%(apikey)s&request_token=%%s" % (config)
