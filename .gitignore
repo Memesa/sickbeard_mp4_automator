@@ -5,6 +5,7 @@ autoProcess.ini
 autoProcess.home.ini
 autoProcess.homePlex.ini
 autoProcess.homePlexMobile.ini
+ffmpeg-*/*
 
 #################
 ## Eclipse
