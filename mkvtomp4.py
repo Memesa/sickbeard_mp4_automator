@@ -27,6 +27,7 @@ class MkvtoMp4:
                  audio_codec=['ac3'],
                  audio_bitrate=256,
                  audio_filter=None,
+                 audio_maxbitrate=128,
                  iOS=False,
                  iOSFirst=False,
                  iOS_filter=None,
@@ -40,6 +41,7 @@ class MkvtoMp4:
                  subencoding='utf-8',
                  downloadsubs=True,
                  processMP4=False,
+                 h264Quality=None,
                  copyto=None,
                  moveto=None,
                  embedsubs=True,
@@ -64,6 +66,7 @@ class MkvtoMp4:
         self.output_dir = output_dir
         self.relocate_moov = relocate_moov
         self.processMP4 = processMP4
+        self.h264Quality=h264Quality
         self.copyto = copyto
         self.moveto = moveto
         self.relocate_moov = relocate_moov
@@ -79,6 +82,7 @@ class MkvtoMp4:
         self.audio_codec = audio_codec
         self.audio_bitrate = audio_bitrate
         self.audio_filter = audio_filter
+        self.audio_maxbitrate = audio_maxbitrate
         self.iOS = iOS
         self.iOSFirst = iOSFirst
         self.iOS_filter = iOS_filter
@@ -111,6 +115,7 @@ class MkvtoMp4:
         self.output_dir = settings.output_dir
         self.relocate_moov = settings.relocate_moov
         self.processMP4 = settings.processMP4
+        self.h264Quality=settings.h264Quality
         self.copyto = settings.copyto
         self.moveto = settings.moveto
         self.relocate_moov = settings.relocate_moov
@@ -152,11 +157,19 @@ class MkvtoMp4:
         delete = self.delete
         deleted = False
         options = None
+        processfile = False
+        processReason = []
         if not self.validSource(inputfile):
             return False
 
         if self.needProcessing(inputfile):
-            options = self.generateOptions(inputfile, original=original)
+            options, processfile, processReason = self.generateOptions(inputfile, original=original)
+            input_dir, filename, input_extension = self.parseFile(inputfile)
+            if not processfile and not input_extension.lower() in valid_output_extensions:
+                processfile = True
+                processReason.append("input format is incompatible")
+        
+        if processfile:
 
             try:
                 if reportProgress:
@@ -165,6 +178,12 @@ class MkvtoMp4:
                     self.log.debug(json.dumps(options, sort_keys=False, indent=4))
             except:
                 self.log.exception("Unable to log options.")
+            
+            if len(processReason) == 1:
+                self.log.info("\nReason for processing: " + processReason[0] + ".\n")
+            elif len(processReason) > 1:
+                reasons = ", ".join(processReason)
+                self.log.info("\nReasons for processing: " + reasons + ".\n")
 
             outputfile, inputfile = self.convert(inputfile, options, reportProgress)
 
@@ -250,25 +269,29 @@ class MkvtoMp4:
 
     # Estimate the video bitrate
     def estimateVideoBitrate(self, info):
-        total_bitrate = info.format.bitrate
-        audio_bitrate = 0
-        for a in info.audio:
-            audio_bitrate += a.bitrate
+        if info.video.bitrate:
+            self.log.debug("Video bitrate is %s." % (str(int(info.video.bitrate / 1000))))
+            return int(info.video.bitrate / 1000)
+        else:
+            total_bitrate = info.format.bitrate
+            audio_bitrate = 0
+            for a in info.audio:
+                audio_bitrate += a.bitrate
 
-        self.log.debug("Total bitrate is %s." % info.format.bitrate)
-        self.log.debug("Total audio bitrate is %s." % audio_bitrate)
-        self.log.debug("Estimated video bitrate is %s." % (total_bitrate - audio_bitrate))
-        return ((total_bitrate - audio_bitrate) / 1000) * .95
+            self.log.debug("Total bitrate is %s." % info.format.bitrate)
+            self.log.debug("Total audio bitrate is %s." % audio_bitrate)
+            self.log.debug("Estimated video bitrate is %s." % (total_bitrate - audio_bitrate))
+            return ((total_bitrate - audio_bitrate) / 1000) * .95
 
     # Generate a list of options to be passed to FFMPEG based on selected settings and the source file parameters and streams
-    def generateOptions(self, inputfile, original=None):
+    def generateOptions(self, inputfile, original=None, processfile = False, processReason = []):
         # Get path information from the input file
         input_dir, filename, input_extension = self.parseFile(inputfile)
 
         info = Converter(self.FFMPEG_PATH, self.FFPROBE_PATH).probe(inputfile)
 
         # Video stream
-        self.log.info("Reading video stream.")
+        self.log.debug("Reading video stream.")
         self.log.info("Video codec detected: %s." % info.video.codec)
 
         try:
@@ -280,9 +303,18 @@ class MkvtoMp4:
             vcodec = 'copy'
         else:
             vcodec = self.video_codec[0]
-        vbitrate = self.video_bitrate if self.video_bitrate else vbr
+            processReason.append("transcoding incorrect video codec (" + str(info.video.codec) + ")")
+        
+        if self.video_bitrate:
+            if self.video_bitrate > vbr:
+                vbitrate = vbr
+            else:
+                vbitrate = self.video_bitrate
+        else:
+            vbitrate = vbr
+        #vbitrate = self.video_bitrate if self.video_bitrate else vbr
 
-        self.log.info("Pix Fmt: %s." % info.video.pix_fmt)
+        self.log.debug("Pix Fmt: %s." % info.video.pix_fmt)
         if self.pix_fmt and info.video.pix_fmt.lower() not in self.pix_fmt:
             vcodec = self.video_codec[0]
 
@@ -290,23 +322,28 @@ class MkvtoMp4:
             self.log.debug("Overriding video bitrate. Codec cannot be copied because video bitrate is too high.")
             vcodec = self.video_codec[0]
             vbitrate = self.video_bitrate
+            processReason.append("video bitrate is too high (" + str(vbr) + " kbps)")
 
         if self.video_width is not None and self.video_width < info.video.video_width:
             self.log.debug("Video width is over the max width, it will be downsampled. Video stream can no longer be copied.")
             vcodec = self.video_codec[0]
             vwidth = self.video_width
+            processReason.append("video resolution is too large and will be scaled down (width: " + str(info.video.video_width) + " px)")
         else:
             vwidth = None
 
         if '264' in info.video.codec.lower() and self.h264_level and info.video.video_level and (info.video.video_level / 10 > self.h264_level):
             self.log.info("Video level %0.1f." % (info.video.video_level / 10))
             vcodec = self.video_codec[0]
+            
+        if not vcodec == 'copy':
+            processfile = True
 
         self.log.debug("Video codec: %s." % vcodec)
         self.log.debug("Video bitrate: %s." % vbitrate)
 
         # Audio streams
-        self.log.info("Reading audio streams.")
+        self.log.debug("Reading audio streams.")
 
         overrideLang = True
         for a in info.audio:
@@ -343,12 +380,12 @@ class MkvtoMp4:
             if self.awl is None or a.metadata['language'].lower() in self.awl:
                 # Create iOS friendly audio stream if the default audio stream has too many channels (iOS only likes AAC stereo)
                 if self.iOS and a.audio_channels > 2:
-                    iOSbitrate = 256 if (self.audio_bitrate * 2) > 256 else (self.audio_bitrate * 2)
+                    iOSbitrate = 128 if (self.audio_bitrate * 2) > 256 else (self.audio_bitrate * 2)
                     self.log.info("Creating audio stream %s from source audio stream %s [iOS-audio]." % (str(l), a.index))
-                    self.log.debug("Audio codec: %s." % self.iOS[0])
+                    self.log.info("Audio codec: %s." % self.iOS[0])
                     self.log.debug("Channels: 2.")
                     self.log.debug("Filter: %s." % self.iOS_filter)
-                    self.log.debug("Bitrate: %s." % iOSbitrate)
+                    self.log.info("Bitrate: %s." % iOSbitrate)
                     self.log.debug("Language: %s." % a.metadata['language'])
                     if l == 0:
                         disposition = 'default'
@@ -365,27 +402,68 @@ class MkvtoMp4:
                         'language': a.metadata['language'],
                         'disposition': disposition,
                     }})
+                    if a.codec.lower() == 'dts':
+                        audio_settings[l]['bsf'] = 'aac_adtstoasc'
+                    processfile = True
+                    processReason.append("adding stereo audio (AAC codec) for mobile playback")
                     l += 1
                 # If the iOS audio option is enabled and the source audio channel is only stereo, the additional iOS channel will be skipped and a single AAC 2.0 channel will be made regardless of codec preference to avoid multiple stereo channels
                 self.log.info("Creating audio stream %s from source stream %s." % (str(l), a.index))
-                if self.iOS and a.audio_channels <= 2:
+                if self.iOS and a.audio_channels <= 2 and not a.codec.lower() == 'dts':
                     self.log.debug("Overriding default channel settings because iOS audio is enabled but the source is stereo [iOS-audio].")
-                    acodec = 'copy' if a.codec in self.iOS else self.iOS[0]
+                    if a.profile == '-1' and a.codec.lower() in self.audio_codec:
+                        acodec = 'aac'
+                        processfile = True
+                        processReason.append("fixing audio (AAC profile: -1)")
+                    elif a.codec in self.iOS:
+                        acodec = 'copy'
+                    else:
+                        acodec = self.iOS[0]
+                        processfile = True
+                        processReason.append("converting stereo audio to aac (" + str(a.codec) + ")")
+                    #acodec = 'copy' if a.codec in self.iOS else self.iOS[0]
                     audio_channels = a.audio_channels
                     afilter = self.iOS_filter
                     abitrate = a.audio_channels * 128 if (a.audio_channels * self.audio_bitrate) > (a.audio_channels * 128) else (a.audio_channels * self.audio_bitrate)
                 else:
                     # If desired codec is the same as the source codec, copy to avoid quality loss
-                    acodec = 'copy' if a.codec.lower() in self.audio_codec else self.audio_codec[0]
+                    if a.codec.lower() == 'dts':
+                        acodec = 'ac3'
+                        processfile = True
+                        processReason.append("Converting DTS to Dolby (run this program again to have the stereo AAC track)")
+                    else:
+                        if not a.profile == '-1' and a.codec.lower() in self.audio_codec:
+                            acodec = 'copy'
+                        elif a.profile == '-1':
+                            acodec = 'aac'
+                            processfile = True
+                            processReason.append("fixing audio (AAC profile: -1)")
+                        else:
+                            acodec = self.audio_codec[0]
+                            processfile = True
+                            processReason.append("incompatible audio (" + str(a.codec) + ")")
+                        #acodec = 'copy' if a.codec.lower() in self.audio_codec else self.audio_codec[0]
                     # Audio channel adjustments
                     if self.maxchannels and a.audio_channels > self.maxchannels:
                         audio_channels = self.maxchannels
                         if acodec == 'copy':
                             acodec = self.audio_codec[0]
+                            processfile = True
+                            processReason.append("audio exceeds maximum channels (" + str(audio_channels) + " channels)")
                         abitrate = self.maxchannels * self.audio_bitrate
                     else:
                         audio_channels = a.audio_channels
                         abitrate = a.audio_channels * self.audio_bitrate
+                    if self.audio_bitrate:
+                        try:
+                            if a.bitrate / 1000 > self.audio_maxbitrate * a.audio_channels:
+                                if acodec == 'copy':
+                                    acodec = self.audio_codec[0]
+                                    processfile = True
+                                    processReason.append("audio bitrate exceeds set maximum (" + str(a.bitrate / 1000) + " kbps)")
+                                abitrate = self.audio_bitrate * a.audio_channels
+                        except:
+                            abitrate = self.audio_bitrate * a.audio_channels
                     # Bitrate calculations/overrides
                     if self.audio_bitrate is 0:
                         self.log.debug("Attempting to set bitrate based on source stream bitrate.")
@@ -410,20 +488,22 @@ class MkvtoMp4:
                 # Set first track as default disposition
                 if l == 0:
                     disposition = 'default'
-                    self.log.info("Audio Track is number %s setting disposition to %s" % (a.index, disposition))
+                    self.log.debug("Audio Track is number %s setting disposition to %s" % (a.index, disposition))
                 else:
                     disposition = 'none'
-                    self.log.info("Audio Track is number %s setting disposition to %s" % (a.index, disposition))
+                    self.log.debug("Audio Track is number %s setting disposition to %s" % (a.index, disposition))
 
                 audio_settings.update({l: {
                     'map': a.index,
                     'codec': acodec,
-                    'channels': audio_channels,
-                    'bitrate': abitrate,
-                    'filter': afilter,
                     'language': a.metadata['language'],
                     'disposition': disposition,
                 }})
+                if audio_settings[l]['codec'] != 'copy':
+                    audio_settings[l]['channels'] = audio_channels
+                    audio_settings[l]['bitrate'] = abitrate
+                    if afilter:
+                        audio_settings[l]['filter'] = afilter
 
                 if acodec == 'copy' and a.codec == 'aac' and self.aac_adtstoasc:
                     audio_settings[l]['bsf'] = 'aac_adtstoasc'
@@ -432,7 +512,7 @@ class MkvtoMp4:
         # Subtitle streams
         subtitle_settings = {}
         l = 0
-        self.log.info("Reading subtitle streams.")
+        self.log.debug("Reading subtitle streams.")
         for s in info.subtitle:
             try:
                 if s.metadata['language'].strip() == "" or s.metadata['language'] is None:
@@ -461,12 +541,19 @@ class MkvtoMp4:
                     }})
                     self.log.info("Creating subtitle stream %s from source stream %s." % (l, s.index))
                     l = l + 1
-            elif s.codec.lower() not in bad_subtitle_codecs and not self.embedsubs:
+                    processfile = True
+                    processReason.append("embedding subtitle(s)")
+            #elif s.codec.lower() not in bad_subtitle_codecs and not self.embedsubs:
+            elif s.codec.lower() not in bad_subtitle_codecs and not self.embedsubs and not (inputfile[-4:].lower() == ".mp4" and not s.bitrate):
                 if self.swl is None or s.metadata['language'].lower() in self.swl:
                     for codec in self.scodec:
+                        if codec == 'srt':
+                            codecout = 'text'
+                        else:
+                            codecout = codec
                         ripsub = {0: {
                             'map': s.index,
-                            'codec': codec,
+                            'codec': codecout,
                             'language': s.metadata['language']
                         }}
                         options = {
@@ -484,22 +571,25 @@ class MkvtoMp4:
 
                         input_dir, filename, input_extension = self.parseFile(inputfile)
                         output_dir = input_dir if self.output_dir is None else self.output_dir
-                        outputfile = os.path.join(output_dir, filename + "." + s.metadata['language'] + forced + "." + extension)
+                        outputfile = os.path.join(output_dir, filename + "." + str(Language(s.metadata['language']).alpha2) + forced + "." + extension)
 
                         i = 2
-                        while os.path.isfile(outputfile):
-                            self.log.debug("%s exists, appending %s to filename." % (outputfile, i))
-                            outputfile = os.path.join(output_dir, filename + "." + s.metadata['language'] + forced + "." + str(i) + "." + extension)
-                            i += 1
-                        try:
-                            self.log.info("Ripping %s subtitle from source stream %s into external file." % (s.metadata['language'], s.index))
-                            conv = Converter(self.FFMPEG_PATH, self.FFPROBE_PATH).convert(inputfile, outputfile, options, timeout=None)
-                            for timecode in conv:
-                                    pass
+                        if not os.path.isfile(outputfile):
+                            while os.path.isfile(outputfile):
+                                self.log.debug("%s exists, appending %s to filename." % (outputfile, i))
+                                outputfile = os.path.join(output_dir, filename + "." + s.metadata['language'] + forced + "." + str(i) + "." + extension)
+                                i += 1
+                            try:
+                                self.log.info("Ripping %s subtitle from source stream %s into external file." % (s.metadata['language'], s.index))
+                                conv = Converter(self.FFMPEG_PATH, self.FFPROBE_PATH).convert(inputfile, outputfile, options, timeout=None)
+                                for timecode in conv:
+                                        pass
 
-                            self.log.info("%s created." % outputfile)
-                        except:
-                            self.log.exception("Unabled to create external subtitle file for stream %s." % (s.index))
+                                self.log.info("%s created." % outputfile)
+                            except:
+                                self.log.exception("Unabled to create external subtitle file for stream %s." % (s.index))
+                        else:
+                            self.log.info("%s already exists, skipping subtitle.".encode(sys.getfilesystemencoding()) % outputfile.encode(sys.getfilesystemencoding()))
 
         # Attempt to download subtitles if they are missing using subliminal
         languages = set()
@@ -529,12 +619,19 @@ class MkvtoMp4:
             try:
                 video = subliminal.scan_video(os.path.abspath(inputfile), subtitles=True, embedded_subtitles=True)
                 subtitles = subliminal.download_best_subtitles([video], languages, hearing_impaired=False, providers=self.subproviders)
-                try:
-                    subliminal.save_subtitles(video, subtitles[video])
-                except:
-                    # Support for older versions of subliminal
-                    subliminal.save_subtitles(subtitles)
-                    self.log.info("Please update to the latest version of subliminal.")
+                print inputfile[:-4] + ".srt"
+                for downloaded_subtitles in subtitles[video]:
+                    subliminal.save_subtitles(video, [downloaded_subtitles])
+                    if downloaded_subtitles.language.alpha3 == self.swl[0]:
+                        if not os.path.exists(inputfile[:-4] + ".srt"):
+                            subliminal.save_subtitles(video, [downloaded_subtitles], single = True)
+
+                # try:
+                    # subliminal.save_subtitles(video, subtitles[video])
+                # except:
+                    # # Support for older versions of subliminal
+                    # subliminal.save_subtitles(subtitles)
+                    # self.log.info("Please update to the latest version of subliminal.")
             except Exception as e:
                 self.log.info("Unable to download subtitles.", exc_info=True)
                 self.log.debug("Unable to download subtitles.", exc_info=True)
@@ -548,6 +645,8 @@ class MkvtoMp4:
                     if subextension[1:] in valid_subtitle_extensions:
                         x, lang = os.path.splitext(subname)
                         lang = lang[1:]
+                        if lang == '':
+                            lang = self.sdl
                         # Using bablefish to convert a 2 language code to a 3 language code
                         if len(lang) is 2:
                             try:
@@ -578,6 +677,8 @@ class MkvtoMp4:
                                 src = src + 1
 
                                 self.deletesubs.add(os.path.join(dirName, fname))
+                                processfile = True
+                                processReason.append("embedding external subtitle(s)")
 
                             else:
                                 self.log.info("Ignoring %s external subtitle stream due to language %s." % (fname, lang))
@@ -588,15 +689,32 @@ class MkvtoMp4:
             'video': {
                 'codec': vcodec,
                 'map': info.video.index,
-                'bitrate': vbitrate,
-                'level': self.h264_level
             },
             'audio': audio_settings,
             'subtitle': subtitle_settings,
             'preopts': ['-fix_sub_duration'],
             'postopts': ['-threads', self.threads]
         }
-
+        if options['video']['codec'] != 'copy':
+            options['video']['bitrate'] = vbitrate
+            if self.h264_level:
+                options['video']['level'] = self.h264_level
+        
+        # If h264Quality is set, remove constant bitrate, slightly adjust quality setting based on input and add this quality/maxbitrate setting.
+        if options['video']['codec'] == 'h264':
+            if self.h264Quality:
+                del options['video']['bitrate']
+                if info.video.video_width <= 1000 or (vwidth and vwidth <= 1000):
+                        options['video']['quality'] = self.h264Quality - 1
+                elif info.video.video_width <= 1300 or (vwidth and vwidth <= 1300):
+                        options['video']['quality'] = self.h264Quality
+                else:
+                    options['video']['quality'] = self.h264Quality + 1
+                if vbitrate == self.video_bitrate:  #set maximum bitrate if it's specified
+                    options['video']['maxbitrate'] = int(vbitrate)
+                else:
+                    options['video']['maxbitrate'] = int(vbitrate * 1.5)
+                
         # If using h264qsv, add the codec in front of the input for decoding
         if vcodec == "h264qsv" and info.video.codec.lower() == "h264" and self.qsv_decoder and (info.video.video_level / 10) < 5:
             options['preopts'].extend(['-vcodec', 'h264_qsv'])
@@ -610,7 +728,7 @@ class MkvtoMp4:
             options['video']['pix_fmt'] = self.pix_fmt[0]
 
         self.options = options
-        return options
+        return options, processfile, processReason
 
     # Encode a new file based on selected options, built in naming conflict resolution
     def convert(self, inputfile, options, reportProgress=False):
@@ -626,7 +744,7 @@ class MkvtoMp4:
         self.log.debug("File name: %s." % filename)
         self.log.debug("Input extension: %s." % input_extension)
         self.log.debug("Output directory: %s." % output_dir)
-        self.log.debug("Output file: %s." % outputfile)
+        self.log.info("Output file: %s." % outputfile)
 
         if os.path.abspath(inputfile) == os.path.abspath(outputfile):
             self.log.debug("Inputfile and outputfile are the same.")
