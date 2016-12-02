@@ -8,6 +8,8 @@ import glob
 import argparse
 import struct
 import logging
+import re
+import xml
 from readSettings import ReadSettings
 from tvdb_mp4 import Tvdb_mp4
 from tmdb_mp4 import tmdb_mp4
@@ -28,7 +30,7 @@ logging.getLogger("requests").setLevel(logging.WARNING)
 logging.getLogger("enzyme").setLevel(logging.WARNING)
 logging.getLogger("qtfaststart").setLevel(logging.WARNING)
 
-log.info("Manual processor started.")
+log.debug("Manual processor started.")
 
 settings = ReadSettings(os.path.dirname(sys.argv[0]), "autoProcess.ini", logger=log)
 
@@ -80,9 +82,42 @@ def getYesNo():
 
 def getinfo(fileName=None, silent=False, tag=True, tvdbid=None):
     tagdata = None
+    def getDataFromNFO(fileName):
+        #print(fileName)
+        tagNfoFile = None
+        path = os.path.abspath(fileName)
+        input_dir, filename = os.path.split(path)
+        filename, input_extension = os.path.splitext(filename)
+        if "Plex Versions" in input_dir:
+            checkForNFO_dir = os.path.join(input_dir[:input_dir.index("Plex Versions")], analyseHomeTitle(filename)[1])
+        else:
+            checkForNFO_dir = input_dir
+        print input_dir
+        for fileInSourceDir in os.listdir(checkForNFO_dir.decode(sys.getfilesystemencoding())):
+            if fileInSourceDir.lower() == filename.lower() + ".nfo":
+                tagNfoFile = os.path.join(checkForNFO_dir, fileInSourceDir)
+        if tagNfoFile:
+            try:
+                with open(tagNfoFile) as openedFile:
+                    tagNFOfileRead = openedFile.read().decode("cp1252").replace("&", "&amp;")
+                #print repr(tagNFOfileRead)
+                tree = xml.etree.ElementTree.fromstring(tagNFOfileRead.encode("utf-8"))
+                #xmlparser = xml.etree.ElementTree.XMLParser(encoding="cp1252")
+                #xmlparser = xml.etree.ElementTree.XMLParser(encoding="utf-8")
+                #tree = xml.etree.ElementTree.parse(tagNfoFile, parser=xmlparser)
+            except xml.etree.ElementTree.ParseError:
+                print "Found nfo file but this is in an invalid XML format and is therefore skipped."
+                return
+            return [4,tagNfoFile, tree] 
+    
+    NFOdata = getDataFromNFO(fileName)
+    if NFOdata:
+        return NFOdata
+    
     # Try to guess the file is guessing is enabled
     if fileName is not None:
-        tagdata = guessInfo(fileName, tvdbid)
+        #tagdata = guessInfo(fileName, tvdbid)
+        tagdata = guessInfo(fileName.decode(sys.getfilesystemencoding()), tvdbid)
 
     if silent is False:
         if tagdata:
@@ -137,8 +172,14 @@ def tmdbInfo(guessData):
         # Identify the first movie in the collection that matches exactly the movie title
         foundname = ''.join(e for e in movie["title"] if e.isalnum())
         origname = ''.join(e for e in guessData["title"] if e.isalnum())
+        try:
+            foundyear = int(movie['release_date'].split('-')[0])
+            origyear = int(guessData['year'])
+        except ValueError:
+            foundyear = 0
+            origyear = 1
         # origname = origname.replace('&', 'and')
-        if foundname.lower() == origname.lower():
+        if foundname.lower() == origname.lower() and foundyear == origyear:
             print("Matched movie title as: %s %s" % (movie["title"].encode(sys.stdout.encoding, errors='ignore'), movie["release_date"].encode(sys.stdout.encoding, errors='ignore')))
             movie = tmdb.Movie(movie["id"])
             if isinstance(movie, dict):
@@ -153,7 +194,10 @@ def tvdbInfo(guessData, tvdbid=None):
     series = guessData["series"]
     if 'year' in guessData:
         fullseries = series + " (" + str(guessData["year"]) + ")"
-    season = guessData["season"]
+    try:
+        season = guessData["season"]
+    except KeyError:
+        season = 1
     episode = guessData["episodeNumber"]
     t = tvdb_api.Tvdb(interactive=False, cache=False, banners=False, actors=False, forceConnect=True, language='en')
     try:
@@ -167,6 +211,77 @@ def tvdbInfo(guessData, tvdbid=None):
         print("Matched TV episode")
     return 3, tvdbid, season, episode
 
+def analyseHomeTitle(filename):
+    analyseTitle = re.compile('(.*) (\d{4})x(\d*)')
+    titleAnalysed = analyseTitle.search(filename)
+    reTitle = titleAnalysed.group(1)
+    reDate = titleAnalysed.group(2)
+    reEpisode = str(int(titleAnalysed.group(3)))
+    return (reTitle, reDate, reEpisode)
+    
+class home_mp4(Tvdb_mp4):
+    def __init__(self, tagNfoFile, root, logger=None):
+        import logging
+        if logger:
+            self.log = logger
+        else:
+            self.log = logging.getLogger(__name__)
+        
+        self.show = None
+        self.title = None
+        self.genre = None
+        self.description = None
+        self.network = None
+        self.airdate = None
+        self.season = None
+        self.episode = None
+        self.seasondata = None
+
+        # while True:
+            # try:
+                # #with open(tagNfoFile) as tNFOf:
+                # #    tagNFOfileData = tNFOf.read().decode("cp437")
+                # xmlparser = xml.etree.ElementTree.XMLParser(encoding="cp1252")
+                # tree = xml.etree.ElementTree.parse(tagNfoFile, parser=xmlparser)
+                # break
+            # except xml.etree.ElementTree.ParseError:
+                # raw_input("Error - something is wrong with the .nfo file (likely a difficult character), plese fix it then press Enter to try again.")
+        #root = tree.getroot()
+        
+        self.show = "- Thuis Videos -"
+        if root.find("title") is not None:
+            self.title = root.find("title").text
+        if root.find("genre") is not None:
+            self.genre = " " + root.find("genre").text + " "
+        else:
+            self.genre = " Home Video "
+        if root.find("plot") is not None:
+            self.description = root.find("plot").text
+        
+        path = os.path.abspath(tagNfoFile)
+        input_dir, filename = os.path.split(path)
+        
+        reInfo = analyseHomeTitle(filename)
+        # analyseTitle = re.compile('(.*) (\d{4})x(\d*)')
+        # titleAnalysed = analyseTitle.search(filename)
+        if not self.title:
+            self.title = reInfo[0]
+        self.airdate = reInfo[1] + "-01-01"
+        self.season = reInfo[1]
+        self.episode = reInfo[2]
+        if not self.seasondata:
+            self.seasondata = []
+        # print self.show
+        # print self.title
+        print repr(self.title)
+        print self.title.encode("CP1252")
+        # print self.genre
+        # print self.description
+        # print self.airdate
+        # print self.season
+        # print self.episode
+        # print self.seasondata
+        
 
 def processFile(inputfile, tagdata, relativePath=None):
     # Gather tagdata
@@ -197,6 +312,15 @@ def processFile(inputfile, tagdata, relativePath=None):
             print("Processing %s Season %02d Episode %02d - %s" % (tagmp4.show.encode(sys.stdout.encoding, errors='ignore'), int(tagmp4.season), int(tagmp4.episode), tagmp4.title.encode(sys.stdout.encoding, errors='ignore')))
         except:
             print("Processing TV episode")
+    elif tagdata[0] is 4:
+        tagNfoFile = tagdata[1]
+        tree = tagdata[2]
+        tagmp4 = home_mp4(tagNfoFile, tree, logger=log)
+        try:
+            print("Processing %s" % (tagmp4.title.encode(sys.stdout.encoding, errors='ignore')))
+        except:
+            print("Processing movie")
+        #print(tagNfoData)
 
     # Process
     if MkvtoMp4(settings, logger=log).validSource(inputfile):
@@ -276,7 +400,7 @@ def main():
     silent = args['auto']
     tag = True
 
-    print("%sbit Python." % (struct.calcsize("P") * 8))
+    log.debug("%sbit Python." % (struct.calcsize("P") * 8))
 
     # Settings overrides
     if(args['config']):
