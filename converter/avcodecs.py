@@ -650,6 +650,7 @@ class H264Codec(VideoCodec):
         'quality': int,  # constant rate factor, range:0(lossless)-51(worst)
         # default:23, recommended: 18-28
         # http://mewiki.project357.com/wiki/X264_Settings#profile
+        'maxbitrate': int, #default: not-set, maximum bitrate in kbps
         'profile': str,  # default: not-set, for valid values see above link
         'level': float,  # default: not-set, values range from 3.0 to 4.2
         'tune': str,  # default: not-set, for valid values see above link
@@ -676,6 +677,9 @@ class H264Codec(VideoCodec):
             optlist.extend(['-preset', safe['preset']])
         if 'quality' in safe:
             optlist.extend(['-crf', str(safe['quality'])])
+        if 'maxbitrate' in safe:
+            optlist.extend(['-maxrate', str(safe['maxbitrate']) + 'k'])
+            optlist.extend(['-bufsize', str(safe['maxbitrate']*2) + 'k'])
         if 'profile' in safe:
             optlist.extend(['-profile:v', safe['profile']])
         if 'level' in safe:
@@ -864,6 +868,12 @@ class SrtCodec(SubtitleCodec):
     codec_name = 'srt'
     ffmpeg_codec_name = 'srt'
 
+class SrtTextCodec(SubtitleCodec):
+    """
+    SRT text output subtitle codec.
+    """
+    codec_name = 'text'
+    ffmpeg_codec_name = 'text'
 
 class WebVTTCodec(SubtitleCodec):
     """
@@ -918,5 +928,5 @@ video_codec_list = [
 
 subtitle_codec_list = [
     SubtitleNullCodec, SubtitleCopyCodec, MOVTextCodec, SrtCodec, SSA, SubRip, DVDSub,
-    DVBSub, WebVTTCodec
+    DVBSub, WebVTTCodec, SrtTextCodec
 ]

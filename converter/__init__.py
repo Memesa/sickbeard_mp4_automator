@@ -239,6 +239,7 @@ class Converter(object):
                 yield int(50.0 + (50.0 * timecode) / info.format.duration)
         else:
             optlist = self.parse_options(options, twopass)
+            print "Options: %s" % optlist
             for timecode in self.ffmpeg.convert(infile, outfile, optlist,
                                                 timeout=timeout, preopts=preopts, postopts=postopts):
                 yield int((100.0 * timecode) / info.format.duration)
