@@ -334,6 +334,8 @@ def processFile(inputfile, tagdata, relativePath=None):
                 except Exception as e:
                     print("There was an error tagging the file")
                     print(e)
+            if settings.downloadtrailer:
+                tagmp4.downloadTrailer(output['output'])
             if settings.relocate_moov:
                 converter.QTFS(output['output'])
             output_files = converter.replicate(output['output'], relativePath=relativePath)

@@ -91,11 +91,13 @@ class ReadSettings:
                         'tag-language': 'en',
                         'download-artwork': 'poster',
                         'download-subs': 'False',
+                        'download-trailer': 'False',
                         'embed-subs': 'True',
                         'sub-providers': 'addic7ed, podnapisi, thesubdb, opensubtitles',
                         'permissions': '777',
                         'post-process': 'False',
-                        'pix-fmt': ''}
+                        'pix-fmt': '',
+                        'h264Quality': ''}
         # Default settings for CouchPotato
         cp_defaults = {'host': 'localhost',
                        'port': '5050',
@@ -458,6 +460,7 @@ class ReadSettings:
             except:
                 self.artwork = True
                 self.log.error("Invalid download-artwork value, defaulting to 'poster'.")
+        self.downloadtrailer = config.getboolean(section, "download-trailer")
 
         # Read relevant CouchPotato section information
         section = "CouchPotato"

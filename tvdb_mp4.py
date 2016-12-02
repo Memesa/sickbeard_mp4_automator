@@ -154,6 +154,9 @@ class Tvdb_mp4:
                     self.log.exception("There was a problem writing the tags. Retrying.")
                     time.sleep(5)
 
+    def downloadTrailer(self, mp4Path):
+        return
+                    
     def setHD(self, width, height):
         if width >= 1900 or height >= 1060:
             self.HD = [2]
