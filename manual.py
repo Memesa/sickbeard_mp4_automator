@@ -160,6 +160,7 @@ def guessInfo(fileName, tvdbid=None):
             drive = drive[drive.rfind('\\')+1:]
         fileName = drive + os.path.splitdrive(fileName)[1]
     guess = guessit.guess_file_info(fileName)
+    guess['source'] = fileName
     try:
         if guess['type'] == 'movie':
             return tmdbInfo(guess)
@@ -175,10 +176,17 @@ def guessInfo(fileName, tvdbid=None):
 def tmdbInfo(guessData):
     tmdb.configure(tmdb_api_key)
     movies = tmdb.Movies(guessData["title"].encode('ascii', errors='ignore'), limit=4)
+    altorigname = re.match('(.*) \(\d{4}\)', os.path.split(guessData['source'])[1])
+    if altorigname is not None:
+        altorigname = altorigname.group(1)
+    else:
+        altorigname = ""
+    
     for movie in movies.iter_results():
         # Identify the first movie in the collection that matches exactly the movie title
         foundname = ''.join(e for e in movie["title"] if e.isalnum())
         origname = ''.join(e for e in guessData["title"] if e.isalnum())
+        altorigname = ''.join(e for e in altorigname if e.isalnum())
         try:
             foundyear = int(movie['release_date'].split('-')[0])
             origyear = int(guessData['year'])
@@ -186,7 +194,7 @@ def tmdbInfo(guessData):
             foundyear = 0
             origyear = 1
         # origname = origname.replace('&', 'and')
-        if foundname.lower() == origname.lower() and foundyear == origyear:
+        if (foundname.lower() == origname.lower() or foundname.lower() == altorigname.lower()) and foundyear == origyear:
             print("Matched movie title as: %s %s" % (movie["title"].encode(sys.stdout.encoding, errors='ignore'), movie["release_date"].encode(sys.stdout.encoding, errors='ignore')))
             movie = tmdb.Movie(movie["id"])
             if isinstance(movie, dict):

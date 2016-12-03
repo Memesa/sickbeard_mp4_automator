@@ -155,7 +155,7 @@ class tmdb_mp4:
         
     def downloadTrailer(self, mp4Path):
         if len(self.trailers['youtube']) > 0:
-            if not os.path.exists(mp4Path[:-4] + "-trailer" + mp4Path[-4:]):
+            if not os.path.exists(os.path.join(os.path.split(mp4Path)[0], self.title + "-trailer" + mp4Path[-4:])):
                 class MyLogger(object):
                     def debug(self, msg):
                         pass
@@ -164,9 +164,9 @@ class tmdb_mp4:
                     def error(self, msg):
                         print(msg)
                 ydl_opts = {
-                            'format': 'bestvideo[height<=720][ext=mp4]',
+                            'format': 'best[height<=720][ext=mp4]',
                             'logger': MyLogger(),
-                            'outtmpl': mp4Path[:-4] + '-trailer.%(ext)s'
+                            'outtmpl': os.path.join(os.path.split(mp4Path)[0], self.title + '-trailer.%(ext)s')
                             }
                 print("Downloading movie trailer (" + 'http://www.youtube.com/watch?v=' + self.trailers['youtube'][0]['source'] + ").")
                 with youtube_dl.YoutubeDL(ydl_opts) as ydl:
