@@ -239,12 +239,12 @@ class Converter(object):
                 yield int(50.0 + (50.0 * timecode) / info.format.duration)
         else:
             optlist = self.parse_options(options, twopass)
-            print "Options: %s" % optlist
+            print("Options: %s" % optlist)
             for timecode in self.ffmpeg.convert(infile, outfile, optlist,
                                                 timeout=timeout, preopts=preopts, postopts=postopts):
                 yield int((100.0 * timecode) / info.format.duration)
 
-    def probe(self, fname, posters_as_video=True):
+    def probe(self, fname, posters_as_video=False):
         """
         Examine the media file. See the documentation of
         converter.FFMpeg.probe() for details.

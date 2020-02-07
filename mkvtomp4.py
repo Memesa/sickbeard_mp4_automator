@@ -22,12 +22,13 @@ class MkvtoMp4:
                  video_codec=['h264', 'x264'],
                  video_bitrate=None,
                  video_width=None,
+                 video_fps=None,
                  h264_level=None,
                  qsv_decoder=True,
                  audio_codec=['ac3'],
                  audio_bitrate=256,
                  audio_filter=None,
-                 audio_maxbitrate=128,
+                 audio_maxbitrate=64,
                  iOS=False,
                  iOSFirst=False,
                  iOS_filter=None,
@@ -75,6 +76,7 @@ class MkvtoMp4:
         self.video_codec = video_codec
         self.video_bitrate = video_bitrate
         self.video_width = video_width
+        self.video_fps = video_fps
         self.h264_level = h264_level
         self.qsv_decoder = qsv_decoder
         self.pix_fmt = pix_fmt
@@ -130,6 +132,7 @@ class MkvtoMp4:
         # Audio settings
         self.audio_codec = settings.acodec
         self.audio_bitrate = settings.abitrate
+        self.audio_maxbitrate = settings.amaxbitrate
         self.audio_filter = settings.afilter
         self.iOS = settings.iOS
         self.iOSFirst = settings.iOSFirst
@@ -150,7 +153,7 @@ class MkvtoMp4:
         self.log.debug("Settings imported.")
 
     # Process a file from start to finish, with checking to make sure formats are compatible with selected settings
-    def process(self, inputfile, reportProgress=False, original=None):
+    def process(self, inputfile, reportProgress=False, original=None, tagmp4=None):
 
         self.log.debug("Process started.")
 
@@ -163,7 +166,7 @@ class MkvtoMp4:
             return False
 
         if self.needProcessing(inputfile):
-            options, processfile, processReason = self.generateOptions(inputfile, original=original)
+            options, processfile, processReason = self.generateOptions(inputfile, original=original, tagmp4=tagmp4)
             input_dir, filename, input_extension = self.parseFile(inputfile)
             if not processfile and not input_extension.lower() in valid_output_extensions:
                 processfile = True
@@ -284,7 +287,7 @@ class MkvtoMp4:
             return ((total_bitrate - audio_bitrate) / 1000) * .95
 
     # Generate a list of options to be passed to FFMPEG based on selected settings and the source file parameters and streams
-    def generateOptions(self, inputfile, original=None, processfile = False, processReason = []):
+    def generateOptions(self, inputfile, original=None, processfile = False, processReason = [], tagmp4=None):
         # Get path information from the input file
         input_dir, filename, input_extension = self.parseFile(inputfile)
 
@@ -304,6 +307,8 @@ class MkvtoMp4:
         else:
             vcodec = self.video_codec[0]
             processReason.append("transcoding incorrect video codec (" + str(info.video.codec) + ")")
+        if tagmp4 is not None:
+            tagmp4.video_codec = info.video.codec
         
         if self.video_bitrate:
             if self.video_bitrate > vbr:
@@ -331,6 +336,13 @@ class MkvtoMp4:
             processReason.append("video resolution is too large and will be scaled down (width: " + str(info.video.video_width) + " px)")
         else:
             vwidth = None
+        if tagmp4 is not None:
+            if info.video.video_width <= 1000:
+                tagmp4.HD = '480p'
+            elif info.video.video_width <= 1300:
+                tagmp4.HD = '720p'
+            else:
+                tagmp4.HD = '1080p'
 
         if '264' in info.video.codec.lower() and self.h264_level and info.video.video_level and (info.video.video_level / 10 > self.h264_level):
             self.log.info("Video level %0.1f." % (info.video.video_level / 10))
@@ -596,7 +608,8 @@ class MkvtoMp4:
         try:
             if self.swl:
                 for alpha3 in self.swl:
-                    languages.add(Language(alpha3))
+                    if not os.path.exists(inputfile[:-4] + "." + str(Language(alpha3)) + ".srt"):
+                        languages.add(Language(alpha3))
             elif self.sdl:
                 languages.add(Language(self.sdl))
             else:
@@ -615,12 +628,13 @@ class MkvtoMp4:
                 subliminal.region.configure('dogpile.cache.memory')
             except:
                 pass
-
+            
             try:
-                video = subliminal.scan_video(os.path.abspath(inputfile), subtitles=True, embedded_subtitles=True)
-                subtitles = subliminal.download_best_subtitles([video], languages, hearing_impaired=False, providers=self.subproviders)
-                print inputfile[:-4] + ".srt"
+                #video = subliminalmod.scan_video(os.path.abspath(inputfile), subtitles=True, embedded_subtitles=True, imdb_id=imdb_id)
+                video = self.scan_video(os.path.abspath(inputfile), subtitles=True, embedded_subtitles=True, tagmp4=tagmp4)
+                subtitles = subliminal.download_best_subtitles([video], languages, hearing_impaired=False, providers=self.subproviders, provider_configs={"opensubtitles" : { "username" : "Memesa", "password" : "R14OT1mAn03ydf8QWH"}})
                 for downloaded_subtitles in subtitles[video]:
+                    self.log.info("Saving downloaded subtitle for " + str(self.swl[0]) + "." , exc_info=True)
                     subliminal.save_subtitles(video, [downloaded_subtitles])
                     if downloaded_subtitles.language.alpha3 == self.swl[0]:
                         if not os.path.exists(inputfile[:-4] + ".srt"):
@@ -726,9 +740,81 @@ class MkvtoMp4:
         # Add pix_fmt
         if self.pix_fmt:
             options['video']['pix_fmt'] = self.pix_fmt[0]
+		
+        # Add framerate
+        if self.video_fps:
+            options['video']['fps'] = int(self.video_fps)
+        
+        if "C:\\Users\\rijss\\Videos\\New folder (2)\\Crematie Annie.mp4" == inputfile:
+            options['video']['fps'] = int(30)
+
+        if "C:\\Users\\rijss\\Videos\\New folder (3)\\Crematie Annie.mp4" == inputfile:
+            options['video']['fps'] = int(30)
 
         self.options = options
         return options, processfile, processReason
+        
+    def scan_video(self, path, subtitles=True, embedded_subtitles=True, subtitles_dir=None, tagmp4=None):
+        """Scan a video and its subtitle languages from a video `path`.
+
+        :param str path: existing path to the video.
+        :param bool subtitles: scan for subtitles with the same name.
+        :param bool embedded_subtitles: scan for embedded subtitles.
+        :param str subtitles_dir: directory to search for subtitles.
+        :return: the scanned video.
+        :rtype: :class:`Video`
+
+        """
+        import subliminal
+        # check for non-existing path
+        if not os.path.exists(path):
+            raise ValueError('Path does not exist')
+
+        # check video extension
+        if not path.endswith(subliminal.VIDEO_EXTENSIONS):
+            raise ValueError('%s is not a valid video extension' % os.path.splitext(path)[1])
+
+        
+        dirpath, filename = os.path.split(path)
+        #logger.info('Scanning video %r in %r', filename, dirpath)
+        
+        drive = os.path.splitdrive(path)[0]
+        if drive[drive.rfind('\\'):] == ":":
+            drive = ""
+        else:
+            drive = drive[drive.rfind('\\')+1:]
+        fileNasPath = drive + os.path.splitdrive(path)[1]
+
+        # guess
+        
+        if tagmp4 is not None:
+            if tagmp4.type == 'Movie':
+                video = subliminal.Movie(path, tagmp4.title, resolution=tagmp4.HD, video_codec=tagmp4.video_codec, imdb_id=tagmp4.imdb_id, year = int(tagmp4.date[:4]))
+            if tagmp4.type == 'Episode':
+                video = subliminal.Episode(path, tagmp4.show, int(tagmp4.season), int(tagmp4.episode), resolution=tagmp4.HD, video_codec=tagmp4.video_codec, title=tagmp4.title, year=int(tagmp4.airdate[:4]), tvdb_id=int(tagmp4.tvdb_id), imdb_id=tagmp4.imdb_id)
+        else:
+            video = subliminal.Video.fromguess(path, subliminal.core.guessit(fileNasPath))
+        print(video)
+
+        # size and hashes
+        video.size = os.path.getsize(path)
+        if video.size > 10485760:
+            #logger.debug('Size is %d', video.size)
+            #video.hashes['opensubtitles'] = subliminal.video.hash_opensubtitles(path)
+            #video.hashes['thesubdb'] = subliminal.video.hash_thesubdb(path)
+            #video.hashes['napiprojekt'] = subliminal.video.hash_napiprojekt(path)
+            video.hashes['opensubtitles'] = subliminal.core.hash_opensubtitles(path)
+            video.hashes['thesubdb'] = subliminal.core.hash_thesubdb(path)
+            video.hashes['napiprojekt'] = subliminal.core.hash_napiprojekt(path)
+            #logger.debug('Computed hashes %r', video.hashes)
+        #else:
+        #    logger.warning('Size is lower than 10MB: hashes not computed')
+
+        # external subtitles
+        if subtitles:
+            video.subtitle_languages |= set(subliminal.core.search_external_subtitles(path, directory=subtitles_dir).values())
+
+        return video
 
     # Encode a new file based on selected options, built in naming conflict resolution
     def convert(self, inputfile, options, reportProgress=False):
@@ -905,3 +991,9 @@ class MkvtoMp4:
                     self.log.debug("Delaying for %s seconds before retrying." % delay)
                     time.sleep(delay)
         return False if os.path.isfile(filename) else True
+
+
+    
+
+    
+

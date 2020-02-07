@@ -75,6 +75,7 @@ class ReadSettings:
                         'audio-codec': 'ac3',
                         'audio-filter': '',
                         'audio-channel-bitrate': '256',
+                        'audio-channel-maxbitrate': '256',
                         'video-codec': 'h264, x264',
                         'video-bitrate': '',
                         'video-max-width': '',
@@ -254,6 +255,15 @@ class ReadSettings:
             log.warning("Audio bitrate was invalid, defaulting to 256 per channel.")
         if self.abitrate > 256:
             log.warning("Audio bitrate >256 may create errors with common codecs.")
+        
+        self.amaxbitrate = config.get(section, "audio-channel-maxbitrate")
+        try:
+            self.amaxbitrate = int(self.amaxbitrate)
+        except:
+            self.amaxbitrate = 256
+            log.warning("Audio max bitrate was invalid, defaulting to 256 per channel.")
+        if self.amaxbitrate > 256:
+            log.warning("Audio max bitrate >256 may create errors with common codecs.")
 
         self.afilter = config.get(section, "audio-filter").lower().strip()  # Audio filter
         if self.afilter == '':

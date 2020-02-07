@@ -686,6 +686,8 @@ class H264Codec(VideoCodec):
             optlist.extend(['-level', '%0.1f' % safe['level']])
         if 'tune' in safe:
             optlist.extend(['-tune', safe['tune']])
+        if 'fps' in safe:
+            optlist.extend(['-r', str(safe['fps'])])
         if 'wscale' in safe and 'hscale' in safe:
             optlist.extend(['-vf', 'scale=%s:%s' % (safe['wscale'], safe['hscale'])])
         elif 'wscale' in safe:

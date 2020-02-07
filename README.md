@@ -47,6 +47,7 @@ Note: Windows users should enter commands in Powershell - using '<' doesn't work
 - `dateutil` - Run `pip install python-dateutil` (this will be automatically installed with subliminal)
 - `deluge-client` Run `pip install deluge-client` if you plan on using Deluge
 - `qtfaststart` Run `pip install qtfaststart` to enable moving moov atom
+- 'tvdb_api' Run `pip install tvdb_api`
 
 General MP4 Configuration
 --------------

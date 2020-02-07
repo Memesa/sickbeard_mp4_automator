@@ -12,7 +12,8 @@ except ImportError:
 import tempfile
 import time
 import logging
-from tvdb_api.tvdb_api import Tvdb
+#from tvdb_api.tvdb_api import Tvdb
+from tvdb_api import Tvdb
 from mutagen.mp4 import MP4, MP4Cover
 from extensions import valid_output_extensions, valid_poster_extensions
 
@@ -34,16 +35,20 @@ class Tvdb_mp4:
                 self.rating = None
                 self.HD = None
                 self.original = original
+                self.type = 'Episode'
+                self.video_codec = None
 
                 # Gather information from theTVDB
                 self.showdata = self.tvdb_show[self.show]
                 self.seasondata = self.showdata[self.season]
                 self.episodedata = self.seasondata[self.episode]
+                self.tvdb_id = self.showdata['id']
+                self.imdb_id = self.showdata['imdbId']
 
                 self.show = self.showdata['seriesname']
                 self.genre = self.showdata['genre']
                 self.network = self.showdata['network']
-                self.contentrating = self.showdata['contentrating']
+                self.contentrating = self.showdata['rating']
 
                 self.title = self.episodedata['episodename']
                 self.description = self.episodedata['overview']
@@ -57,6 +62,7 @@ class Tvdb_mp4:
             except Exception as e:
                 self.log.exception("Failed to connect to TVDB, trying again in 20 seconds.")
                 time.sleep(20)
+                raw_input("wait")
 
     def writeTags(self, mp4Path, artwork=True, thumbnail=False):
         self.log.info("Tagging file: %s." % mp4Path)
@@ -86,7 +92,10 @@ class Tvdb_mp4:
         #if self.HD is not None:
         #    checktags["hdvd"] = self.HD
         if self.genre is not None:
-            checktags["\xa9gen"] = self.genre[1:-1].split('|')[0]
+            try:
+                checktags["\xa9gen"] = self.genre[1:-1].split('|')[0]
+            except AttributeError:
+                checktags["\xa9gen"] = self.genre[0]
         
         ProcessTags = False
         for keys, values in checktags.items():
@@ -126,7 +135,11 @@ class Tvdb_mp4:
 #           if self.HD is not None:
 #               video["hdvd"] = self.HD
             if self.genre is not None:
-                video["\xa9gen"] = self.genre[1:-1].split('|')[0]
+                #video["\xa9gen"] = self.genre[1:-1].split('|')[0]
+                try:
+                    video["\xa9gen"] = self.genre[1:-1].split('|')[0]
+                except AttributeError:
+                    video["\xa9gen"] = self.genre[0]
                 # video["\xa9gen"] = self.genre.replace('|', ',')[1:-1]  # Genre(s)
 #           video["----:com.apple.iTunes:iTunMOVI"] = self.xml  # XML - see xmlTags method
 #           video["----:com.apple.iTunes:iTunEXTC"] = self.setRating()  # iTunes content rating
@@ -207,7 +220,7 @@ class Tvdb_mp4:
         # Write actors
         output.write(castheader)
         for a in self.showdata['_actors'][:5]:
-            if a is not None:
+            if a['name'] is not None:
                 output.write("<dict><key>name</key><string>%s</string></dict>\n" % a['name'].encode('ascii', errors='ignore'))
         output.write(subfooter)
 

@@ -15,7 +15,8 @@ from tvdb_mp4 import Tvdb_mp4
 from tmdb_mp4 import tmdb_mp4
 from mkvtomp4 import MkvtoMp4
 from post_processor import PostProcessor
-from tvdb_api import tvdb_api
+#from tvdb_api import tvdb_api
+import tvdb_api
 from tmdb_api import tmdb
 from extensions import tmdb_api_key
 from logging.config import fileConfig
@@ -92,24 +93,27 @@ def getinfo(fileName=None, silent=False, tag=True, tvdbid=None):
             checkForNFO_dir = os.path.join(input_dir[:input_dir.index("Plex Versions")], analyseHomeTitle(filename)[1])
         else:
             checkForNFO_dir = input_dir
-        print input_dir
-        for fileInSourceDir in os.listdir(checkForNFO_dir.decode(sys.getfilesystemencoding())):
+        try:
+            checkForNFO_dir = checkForNFO_dir.decode(sys.getfilesystemencoding())
+        except AttributeError:
+            pass
+        #print(checkForNFO_dir)
+        for fileInSourceDir in os.listdir(checkForNFO_dir):
             if fileInSourceDir.lower() == filename.lower() + ".nfo":
                 tagNfoFile = os.path.join(checkForNFO_dir, fileInSourceDir)
         if tagNfoFile:
             try:
                 with open(tagNfoFile) as openedFile:
                     tagNFOfileRead = openedFile.read().decode("cp1252").replace("&", "&amp;")
-                #print repr(tagNFOfileRead)
+                #print(repr(tagNFOfileRead))_
                 tree = xml.etree.ElementTree.fromstring(tagNFOfileRead.encode("utf-8"))
                 #xmlparser = xml.etree.ElementTree.XMLParser(encoding="cp1252")
                 #xmlparser = xml.etree.ElementTree.XMLParser(encoding="utf-8")
                 #tree = xml.etree.ElementTree.parse(tagNfoFile, parser=xmlparser)
             except xml.etree.ElementTree.ParseError:
-                print "Found nfo file but this is in an invalid XML format and is therefore skipped."
+                print("Found nfo file but this is in an invalid XML format and is therefore skipped.")
                 return
             return [4,tagNfoFile, tree] 
-    
     NFOdata = getDataFromNFO(fileName)
     if NFOdata:
         return NFOdata
@@ -117,9 +121,12 @@ def getinfo(fileName=None, silent=False, tag=True, tvdbid=None):
     # Try to guess the file is guessing is enabled
     if fileName is not None:
         #tagdata = guessInfo(fileName, tvdbid)
-        tagdata = guessInfo(fileName.decode(sys.getfilesystemencoding()), tvdbid)
-
-    if silent is False:
+        try:
+            tagdata = guessInfo(fileName.decode(sys.getfilesystemencoding()), tvdbid)
+        except AttributeError:
+            tagdata = guessInfo(fileName, tvdbid)
+    #if silent is False:
+    if silent is False or not tagdata:
         if tagdata:
             print("Proceed using guessed identification from filename?")
             if getYesNo():
@@ -127,20 +134,20 @@ def getinfo(fileName=None, silent=False, tag=True, tvdbid=None):
         else:
             print("Unable to determine identity based on filename, must enter manually")
         m_type = mediatype()
-        if m_type is 3:
+        if m_type == 3:
             tvdbid = getValue("Enter TVDB Series ID", True)
             season = getValue("Enter Season Number", True)
             episode = getValue("Enter Episode Number", True)
             return m_type, tvdbid, season, episode
-        elif m_type is 1:
+        elif m_type == 1:
             imdbid = getValue("Enter IMDB ID")
             return m_type, imdbid
-        elif m_type is 2:
+        elif m_type == 2:
             tmdbid = getValue("Enter TMDB ID", True)
             return m_type, tmdbid
-        elif m_type is 4:
+        elif m_type == 4:
             return None
-        elif m_type is 5:
+        elif m_type == 5:
             return False
     else:
         if tagdata and tag:
@@ -149,10 +156,24 @@ def getinfo(fileName=None, silent=False, tag=True, tvdbid=None):
             return None
 
 
-def guessInfo(fileName, tvdbid=None):
+def guessInfo(fileName_orig, tvdbid=None):
+    #print(fileName_orig)
     if not settings.fullpathguess:
-        fileName = os.path.basename(fileName)
-    guess = guessit.guess_file_info(fileName)
+        fileName = os.path.basename(fileName_orig)
+    else:
+        drive = os.path.splitdrive(fileName_orig)[0]
+        if drive[drive.rfind('\\'):] == ":":
+           drive = ""
+        else:
+            drive = drive[drive.rfind('\\')+1:]
+            #drive = os.path.splitdrive(fileName)[0]
+        fileName = drive + os.path.splitdrive(fileName_orig)[1]
+    #guess = guessit.guess_file_info(fileName)
+    fileName = fileName_orig
+    print(fileName)
+    guess = guessit.guessit(fileName)
+    guess['source'] = fileName
+    print(guess)
     try:
         if guess['type'] == 'movie':
             return tmdbInfo(guess)
@@ -167,19 +188,31 @@ def guessInfo(fileName, tvdbid=None):
 
 def tmdbInfo(guessData):
     tmdb.configure(tmdb_api_key)
-    movies = tmdb.Movies(guessData["title"].encode('ascii', errors='ignore'), limit=4)
+    altorigname = re.match('(.*)\d{4}', os.path.split(guessData['source'])[1])
+    if altorigname is not None:
+        altorigname = altorigname.group(1)
+    else:
+        altorigname = ""
+    guesstitle = guessData["title"].encode('cp1252', errors='ignore')
+    if guesstitle == 'The':
+        guesstitle = altorigname
+    movies = tmdb.Movies(guesstitle, limit=4)
+    
     for movie in movies.iter_results():
         # Identify the first movie in the collection that matches exactly the movie title
         foundname = ''.join(e for e in movie["title"] if e.isalnum())
+        origfoundname = ''.join(e for e in movie["original_title"] if e.isalnum())
         origname = ''.join(e for e in guessData["title"] if e.isalnum())
+        altorigname = ''.join(e for e in altorigname if e.isalnum())
         try:
             foundyear = int(movie['release_date'].split('-')[0])
             origyear = int(guessData['year'])
         except ValueError:
             foundyear = 0
             origyear = 1
+        print(origname, altorigname, origyear, foundname, origfoundname, foundyear)
         # origname = origname.replace('&', 'and')
-        if foundname.lower() == origname.lower() and foundyear == origyear:
+        if (foundname.lower() == origname.lower() or foundname.lower() == altorigname.lower() or origfoundname.lower() == origname.lower() or foundname.lower() == altorigname.lower()) and foundyear == origyear:
             print("Matched movie title as: %s %s" % (movie["title"].encode(sys.stdout.encoding, errors='ignore'), movie["release_date"].encode(sys.stdout.encoding, errors='ignore')))
             movie = tmdb.Movie(movie["id"])
             if isinstance(movie, dict):
@@ -191,15 +224,20 @@ def tmdbInfo(guessData):
 
 
 def tvdbInfo(guessData, tvdbid=None):
-    series = guessData["series"]
+    #series = guessData["series"]
+    series = guessData["title"]
     if 'year' in guessData:
         fullseries = series + " (" + str(guessData["year"]) + ")"
     try:
         season = guessData["season"]
     except KeyError:
         season = 1
-    episode = guessData["episodeNumber"]
+    #episode = guessData["episodeNumber"]
+    episode = guessData["episode"]
+    #print(episode)
     t = tvdb_api.Tvdb(interactive=False, cache=False, banners=False, actors=False, forceConnect=True, language='en')
+    #print(t)
+    #tvdbid = "346602"
     try:
         tvdbid = str(tvdbid) if tvdbid else t[fullseries]['id']
         series = t[int(tvdbid)]['seriesname']
@@ -212,11 +250,18 @@ def tvdbInfo(guessData, tvdbid=None):
     return 3, tvdbid, season, episode
 
 def analyseHomeTitle(filename):
-    analyseTitle = re.compile('(.*) (\d{4})x(\d*)')
-    titleAnalysed = analyseTitle.search(filename)
-    reTitle = titleAnalysed.group(1)
-    reDate = titleAnalysed.group(2)
-    reEpisode = str(int(titleAnalysed.group(3)))
+    try:
+        analyseTitle = re.compile('(.*) (\d{4})x(\d*)')
+        titleAnalysed = analyseTitle.search(filename)
+        reTitle = titleAnalysed.group(1)
+        reDate = titleAnalysed.group(2)
+        reEpisode = str(int(titleAnalysed.group(3)))
+    except AttributeError:
+        analyseTitle = re.compile('(.*).(.*)')
+        titleAnalysed = analyseTitle.search(filename)
+        reTitle = titleAnalysed.group(1)
+        reDate = '0'
+        reEpisode = '0'
     return (reTitle, reDate, reEpisode)
     
 class home_mp4(Tvdb_mp4):
@@ -257,6 +302,12 @@ class home_mp4(Tvdb_mp4):
             self.genre = " Home Video "
         if root.find("plot") is not None:
             self.description = root.find("plot").text
+        if root.find("set") is not None:
+            self.season = root.find("set").text
+            self.airdate = root.find("set").text + "-01-01"
+        else:
+            self.airdate = reInfo[1] + "-01-01"
+            self.season = reInfo[1]
         
         path = os.path.abspath(tagNfoFile)
         input_dir, filename = os.path.split(path)
@@ -266,21 +317,19 @@ class home_mp4(Tvdb_mp4):
         # titleAnalysed = analyseTitle.search(filename)
         if not self.title:
             self.title = reInfo[0]
-        self.airdate = reInfo[1] + "-01-01"
-        self.season = reInfo[1]
         self.episode = reInfo[2]
         if not self.seasondata:
             self.seasondata = []
-        # print self.show
-        # print self.title
-        print repr(self.title)
-        print self.title.encode("CP1252")
-        # print self.genre
-        # print self.description
-        # print self.airdate
-        # print self.season
-        # print self.episode
-        # print self.seasondata
+        # print(self.show)
+        # print(self.title)
+        print(repr(self.title))
+        print(self.title.encode("CP1252"))
+        # print(self.genre)
+        # print(self.description)
+        # print(self.airdate)
+        # print(self.season)
+        # print(self.episode)
+        # print(self.seasondata)
         
 
 def processFile(inputfile, tagdata, relativePath=None):
@@ -289,21 +338,21 @@ def processFile(inputfile, tagdata, relativePath=None):
         return  # This means the user has elected to skip the file
     elif tagdata is None:
         tagmp4 = None  # No tag data specified but convert the file anyway
-    elif tagdata[0] is 1:
+    elif tagdata[0] == 1:
         imdbid = tagdata[1]
         tagmp4 = tmdb_mp4(imdbid, language=settings.taglanguage, logger=log)
         try:
             print("Processing %s" % (tagmp4.title.encode(sys.stdout.encoding, errors='ignore')))
         except:
             print("Processing movie")
-    elif tagdata[0] is 2:
+    elif tagdata[0] == 2:
         tmdbid = tagdata[1]
         tagmp4 = tmdb_mp4(tmdbid, True, language=settings.taglanguage, logger=log)
         try:
             print("Processing %s" % (tagmp4.title.encode(sys.stdout.encoding, errors='ignore')))
         except:
             print("Processing movie")
-    elif tagdata[0] is 3:
+    elif tagdata[0] == 3:
         tvdbid = int(tagdata[1])
         season = int(tagdata[2])
         episode = int(tagdata[3])
@@ -312,7 +361,7 @@ def processFile(inputfile, tagdata, relativePath=None):
             print("Processing %s Season %02d Episode %02d - %s" % (tagmp4.show.encode(sys.stdout.encoding, errors='ignore'), int(tagmp4.season), int(tagmp4.episode), tagmp4.title.encode(sys.stdout.encoding, errors='ignore')))
         except:
             print("Processing TV episode")
-    elif tagdata[0] is 4:
+    elif tagdata[0] == 4:
         tagNfoFile = tagdata[1]
         tree = tagdata[2]
         tagmp4 = home_mp4(tagNfoFile, tree, logger=log)
@@ -325,7 +374,7 @@ def processFile(inputfile, tagdata, relativePath=None):
     # Process
     if MkvtoMp4(settings, logger=log).validSource(inputfile):
         converter = MkvtoMp4(settings, logger=log)
-        output = converter.process(inputfile, True)
+        output = converter.process(inputfile, True, tagmp4=tagmp4)
         if output:
             if tagmp4 is not None:
                 try:
@@ -333,20 +382,22 @@ def processFile(inputfile, tagdata, relativePath=None):
                     tagmp4.writeTags(output['output'], settings.artwork, settings.thumbnail)
                 except Exception as e:
                     print("There was an error tagging the file")
+                    print(output)
                     print(e)
-            if settings.downloadtrailer:
-                tagmp4.downloadTrailer(output['output'])
+                    raw_input("wait")
+                if settings.downloadtrailer:
+                    tagmp4.downloadTrailer(output['output'])
             if settings.relocate_moov:
                 converter.QTFS(output['output'])
             output_files = converter.replicate(output['output'], relativePath=relativePath)
             if settings.postprocess:
                 post_processor = PostProcessor(output_files)
                 if tagdata:
-                    if tagdata[0] is 1:
+                    if tagdata[0] == 1:
                         post_processor.setMovie(tagdata[1])
-                    elif tagdata[0] is 2:
+                    elif tagdata[0] == 2:
                         post_processor.setMovie(tagdata[1])
-                    elif tagdata[0] is 3:
+                    elif tagdata[0] == 3:
                         post_processor.setTV(tagdata[1], tagdata[2], tagdata[3])
                 post_processor.run_scripts()
 
@@ -446,7 +497,7 @@ def main():
             pass
     else:
         path = getValue("Enter path to file")
-
+    
     if os.path.isdir(path):
         tvdbid = int(args['tvdbid']) if args['tvdbid'] else None
         walkDir(path, silent, tvdbid=tvdbid, preserveRelative=args['preserveRelative'], tag=settings.tagfile)
@@ -470,6 +521,8 @@ def main():
                 tagdata = [2, tmdbid]
         else:
             tagdata = getinfo(path, silent=silent)
+            if tagdata is None:
+                raw_input('no data found :(')
         processFile(path, tagdata)
     else:
         try:

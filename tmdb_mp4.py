@@ -11,7 +11,6 @@ except ImportError:
 import tempfile
 import time
 import logging
-import youtube_dl
 from tmdb_api import tmdb
 from mutagen.mp4 import MP4, MP4Cover
 from extensions import valid_output_extensions, valid_poster_extensions, tmdb_api_key
@@ -42,6 +41,7 @@ class tmdb_mp4:
                 self.movie = tmdb.Movie(imdbid)
 
                 self.HD = None
+                self.video_codec = None
 
                 self.title = self.movie.get_title()
                 self.genre = self.movie.get_genres()
@@ -51,6 +51,8 @@ class tmdb_mp4:
 
                 self.date = self.movie.get_release_date()
                 self.trailers = self.movie.get_trailers()
+                self.type = 'Movie'
+                self.imdb_id = self.movie.get_imdb_id()
 
                 # Generate XML tags for Actors/Writers/Directors/Producers
                 self.xml = self.xmlTags()
@@ -67,6 +69,7 @@ class tmdb_mp4:
             sys.exit()
 
         video = MP4(mp4Path)
+        #print('1')
         checktags = {
             "\xa9nam": self.title,
             "desc": self.shortdescription,
@@ -154,23 +157,31 @@ class tmdb_mp4:
                     time.sleep(5)
         
     def downloadTrailer(self, mp4Path):
+        import youtube_dl
         if len(self.trailers['youtube']) > 0:
-            if not os.path.exists(mp4Path[:-4] + "-trailer" + mp4Path[-4:]):
-                class MyLogger(object):
-                    def debug(self, msg):
+            class MyLogger(object):
+                def debug(self, msg):
+                    pass
+                def warning(self, msg):
+                    pass
+                def error(self, msg):
+                    print(msg)
+            for trailernr in range(len(self.trailers['youtube'])):
+                if not os.path.exists(os.path.join(os.path.split(mp4Path)[0], self.title + "-trailer" + mp4Path[-4:])):
+                    ydl_opts = {
+                                'format': 'best[height<=720][ext=mp4]',
+                                'logger': MyLogger(),
+                                'outtmpl': os.path.join(os.path.split(mp4Path)[0], self.title + '-trailer.%(ext)s'),
+                                #'writesubtitles': True,
+                                #'subtitlesformat': 'srt',
+                                }
+                    print("Downloading movie trailer (" + 'http://www.youtube.com/watch?v=' + self.trailers['youtube'][trailernr]['source'] + ").")
+                    try:
+                        with youtube_dl.YoutubeDL(ydl_opts) as ydl:
+                            ydl.download(['http://www.youtube.com/watch?v=' + self.trailers['youtube'][trailernr]['source']])
+                        break
+                    except Exception as e:
                         pass
-                    def warning(self, msg):
-                        pass
-                    def error(self, msg):
-                        print(msg)
-                ydl_opts = {
-                            'format': 'bestvideo[height<=720][ext=mp4]',
-                            'logger': MyLogger(),
-                            'outtmpl': mp4Path[:-4] + '-trailer.%(ext)s'
-                            }
-                print("Downloading movie trailer (" + 'http://www.youtube.com/watch?v=' + self.trailers['youtube'][0]['source'] + ").")
-                with youtube_dl.YoutubeDL(ydl_opts) as ydl:
-                    ydl.download(['http://www.youtube.com/watch?v=' + self.trailers['youtube'][0]['source']])
 
     def rating(self):
         ratings = {'G': '100',
