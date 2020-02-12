@@ -22,13 +22,10 @@ class FFMpegConvertError(Exception):
         """
         @param    message: Error message.
         @type     message: C{str}
-
         @param    cmd: Full command string used to spawn ffmpeg.
         @type     cmd: C{str}
-
         @param    output: Full stdout output from the ffmpeg command.
         @type     output: C{str}
-
         @param    details: Optional error details.
         @type     details: C{str}
         """
@@ -121,13 +118,32 @@ class MediaStreamInfo(object):
         self.video_fps = None
         self.video_level = None
         self.pix_fmt = None
+        self.profile = None
         self.audio_channels = None
         self.audio_samplerate = None
         self.attached_pic = None
-        self.sub_forced = None
-        self.sub_default = None
+        self.forced = False
+        self.field_order = None
+        self.default = False
         self.metadata = {}
-        self.profile = None
+
+    def toJson(self):
+        language = self.metadata.get("language", "und").lower().strip()
+        out = {'index': self.index,
+               'codec': self.codec,
+               'type': self.type}
+        if self.type == 'audio':
+            out['channels'] = self.audio_channels
+            out['language'] = language
+            out['default'] = self.default
+        elif self.type == 'video':
+            out['pix_fmt'] = self.pix_fmt
+            out['profile'] = self.profile
+        elif self.type == 'subtitle':
+            out['forced'] = self.forced
+            out['default'] = self.default
+            out['language'] = language
+        return out
 
     @staticmethod
     def parse_float(val, default=0.0):
@@ -140,6 +156,13 @@ class MediaStreamInfo(object):
     def parse_int(val, default=0):
         try:
             return int(val)
+        except:
+            return default
+
+    @staticmethod
+    def parse_bool(val, default=False):
+        try:
+            return bool(val)
         except:
             return default
 
@@ -172,6 +195,10 @@ class MediaStreamInfo(object):
             self.attached_pic = self.parse_int(val)
         elif key == 'profile':
             self.profile = val
+        elif key == 'DISPOSITION:forced':
+            self.forced = self.parse_bool(self.parse_int(val))
+        elif key == 'DISPOSITION:default':
+            self.default = self.parse_bool(self.parse_int(val))
 
         if key.startswith('TAG:'):
             key = key.split('TAG:')[1].lower()
@@ -199,16 +226,12 @@ class MediaStreamInfo(object):
                         self.video_fps = float(n) / float(d)
                 elif '.' in val:
                     self.video_fps = self.parse_float(val)
-            if key == 'level':
+            elif key == 'level':
                 self.video_level = self.parse_float(val)
-            if key == 'pix_fmt':
+            elif key == 'pix_fmt':
                 self.pix_fmt = val
-
-        if self.type == 'subtitle':
-            if key == 'disposition:forced':
-                self.sub_forced = self.parse_int(val)
-            if key == 'disposition:default':
-                self.sub_default = self.parse_int(val)
+            elif key == "field_order":
+                self.field_order = val
 
     def __repr__(self):
         d = ''
@@ -251,6 +274,13 @@ class MediaInfo(object):
         self.format = MediaFormatInfo()
         self.posters_as_video = posters_as_video
         self.streams = []
+
+    def toJson(self):
+        return {'format': self.format.format,
+                'format-fullname': self.format.fullname,
+                'video': self.video.toJson(),
+                'audio': [x.toJson() for x in self.audio],
+                'subtitle': [x.toJson() for x in self.subtitle]}
 
     def parse_ffprobe(self, raw):
         """
@@ -327,7 +357,6 @@ class FFMpeg(object):
     """
     FFMPeg wrapper object, takes care of calling the ffmpeg binaries,
     passing options and parsing the output.
-
     >>> f = FFMpeg()
     """
     DEFAULT_JPEG_QUALITY = 4
@@ -384,7 +413,6 @@ class FFMpeg(object):
         Examine the media file and determine its format and media streams.
         Returns the MediaInfo object, or None if the specified file is
         not a valid media file.
-
         >>> info = FFMpeg().probe('test1.ogg')
         >>> info.format
         'ogg'
@@ -420,33 +448,7 @@ class FFMpeg(object):
 
         return info
 
-    def convert(self, infile, outfile, opts, timeout=10, preopts=None, postopts=None):
-        """
-        Convert the source media (infile) according to specified options
-        (a list of ffmpeg switches as strings) and save it to outfile.
-
-        Convert returns a generator that needs to be iterated to drive the
-        conversion process. The generator will periodically yield timecode
-        of currently processed part of the file (ie. at which second in the
-        content is the conversion process currently).
-
-        The optional timeout argument specifies how long should the operation
-        be blocked in case ffmpeg gets stuck and doesn't report back. See
-        the documentation in Converter.convert() for more details about this
-        option.
-
-        >>> conv = FFMpeg().convert('test.ogg', '/tmp/output.mp3',
-        ...    ['-acodec libmp3lame', '-vn'])
-        >>> for timecode in conv:
-        ...    pass # can be used to inform the user about conversion progress
-
-        """
-        if os.name == 'nt':
-            timeout = 0
-
-        if not os.path.exists(infile):
-            raise FFMpegError("Input file doesn't exist: " + infile)
-
+    def generateCommands(self, infile, outfile, opts, preopts=None, postopts=None):
         cmds = [self.ffmpeg_path]
         if preopts:
             cmds.extend(preopts)
@@ -463,6 +465,34 @@ class FFMpeg(object):
         if postopts:
             cmds.extend(postopts)
         cmds.extend(['-y', outfile])
+        return cmds
+
+    def convert(self, infile, outfile, opts, timeout=10, preopts=None, postopts=None):
+        """
+        Convert the source media (infile) according to specified options
+        (a list of ffmpeg switches as strings) and save it to outfile.
+        Convert returns a generator that needs to be iterated to drive the
+        conversion process. The generator will periodically yield timecode
+        of currently processed part of the file (ie. at which second in the
+        content is the conversion process currently).
+        The optional timeout argument specifies how long should the operation
+        be blocked in case ffmpeg gets stuck and doesn't report back. See
+        the documentation in Converter.convert() for more details about this
+        option.
+        >>> conv = FFMpeg().convert('test.ogg', '/tmp/output.mp3',
+        ...    ['-acodec libmp3lame', '-vn'])
+        >>> for timecode in conv:
+        ...    pass # can be used to inform the user about conversion progress
+        """
+        if os.name == 'nt':
+            timeout = 0
+            if len(outfile) > 260:
+                outfile = '\\\\?\\' + outfile
+
+        if not os.path.exists(infile):
+            raise FFMpegError("Input file doesn't exist: " + infile)
+
+        cmds = self.generateCommands(infile, outfile, opts, preopts, postopts)
 
         if timeout:
             def on_sigalrm(*_):
@@ -558,7 +588,6 @@ class FFMpeg(object):
             If not specified, the video resolution is used.
         @param quality: quality of jpeg file in range 2(best)-31(worst)
             recommended range: 2-6
-
         >>> FFMpeg().thumbnail('test1.ogg', 5, '/tmp/shot.png', '320x240')
         """
         return self.thumbnails(fname, [(time, outfile, size, quality)])
@@ -569,7 +598,6 @@ class FFMpeg(object):
         @param option_list: a list of tuples like:
             (time, outfile, size=None, quality=DEFAULT_JPEG_QUALITY)
             see documentation of `converter.FFMpeg.thumbnail()` for details.
-
         >>> FFMpeg().thumbnails('test1.ogg', [(5, '/tmp/shot.png', '320x240'),
         >>>                                   (10, '/tmp/shot2.png', None, 5)])
         """

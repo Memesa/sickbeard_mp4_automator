@@ -1,3 +1,5 @@
+#!/usr/bin/env python
+
 import os
 import re
 import sys
@@ -19,62 +21,35 @@ elif not os.path.isdir(logpath):
 configPath = os.path.abspath(os.path.join(os.path.dirname(sys.argv[0]), 'logging.ini')).replace("\\", "\\\\")
 logPath = os.path.abspath(os.path.join(logpath, 'index.log')).replace("\\", "\\\\")
 fileConfig(configPath, defaults={'logfilename': logPath})
-log = logging.getLogger("uTorrentPostProcess")
+log = logging.getLogger("qBittorrentPostProcess")
 
-log.info("uTorrent post processing started.")
+log.info("qBittorrent post processing started.")
 
-# Args: %L %T %D %K %F %I Label, Tracker, Directory, single|multi, NameofFile(if single), InfoHash
-
-
-def _authToken(session=None, host=None, username=None, password=None):
-    auth = None
-    if not session:
-        session = requests.Session()
-    response = session.get(host + "gui/token.html", auth=(username, password), verify=False, timeout=30)
-    if response.status_code == 200:
-        auth = re.search("<div.*?>(\S+)<\/div>", response.text).group(1)
-    else:
-        log.error("Authentication Failed - Status Code " + response.status_code + ".")
-
-    return auth, session
-
-
-def _sendRequest(session, host='http://localhost:8080/', username=None, password=None, params=None, files=None, fnct=None):
-    try:
-        response = session.post(host + "gui/", auth=(username, password), params=params, files=files, timeout=30)
-    except (requests.exceptions.ConnectionError, requests.exceptions.HTTPError), e:
-        log.exception("Problem sending command " + fnct + " - " + str(e) + ".")
-        return False
-
-    if response.status_code == 200:
-        log.debug("Request sent successfully - %s." % fnct)
-        return True
-
-    log.error("Problem sending command " + fnct + ", return code = " + str(response.status_code) + ".")
-    return False
-
-if len(sys.argv) < 6:
-    log.error("Not enough command line parameters present, are you launching this from uTorrent?")
-    log.error("#Args: %L %T %D %K %F %I %N Label, Tracker, Directory, single|multi, NameofFile(if single), InfoHash, Name")
+if len(sys.argv) != 7:
+    log.error("Not enough command line parameters present, are you launching this from qBittorrent?")
+    log.error("#Args: %L %T %R %F %N %I Category, Tracker, RootPath, ContentPath , TorrentName, InfoHash")
     log.error("Length was %s" % str(len(sys.argv)))
     log.error(str(sys.argv[1:]))
     sys.exit()
 
 settings = ReadSettings(os.path.dirname(sys.argv[0]), "autoProcess.ini")
-path = str(sys.argv[3])
 label = sys.argv[1].lower()
-categories = [settings.uTorrent['cp'], settings.uTorrent['sb'], settings.uTorrent['sonarr'], settings.uTorrent['radarr'], settings.uTorrent['sr'], settings.uTorrent['bypass']]
+root_path = str(sys.argv[3])
+content_path = str(sys.argv[4])
+name = sys.argv[5]
 torrent_hash = sys.argv[6]
-try:
-    name = sys.argv[7]
-except:
-    name = sys.argv[6]
+categories = [settings.qBittorrent['cp'], settings.qBittorrent['sb'], settings.qBittorrent['sonarr'], settings.qBittorrent['radarr'], settings.qBittorrent['sr'], settings.qBittorrent['bypass']]
 
-log.debug("Path: %s." % path)
+log.debug("Root Path: %s." % root_path)
 log.debug("Label: %s." % label)
 log.debug("Categories: %s." % categories)
 log.debug("Torrent hash: %s." % torrent_hash)
 log.debug("Torrent name: %s." % name)
+
+if root_path == content_path:
+    single_file = False
+else:
+    single_file = True
 
 if label not in categories:
     log.error("No valid label detected.")
@@ -84,57 +59,44 @@ if len(categories) != len(set(categories)):
     log.error("Duplicate category detected. Category names must be unique.")
     sys.exit()
 
-# Import requests
+# Import python-qbittorrent
 try:
-    import requests
+    from qbittorrent import Client
 except ImportError:
-    log.exception("Python module REQUESTS is required. Install with 'pip install requests' then try again.")
-    sys.exit()
-
-try:
-    web_ui = settings.uTorrentWebUI
-    log.debug("WebUI is true.")
-except:
-    log.debug("WebUI is false.")
-    web_ui = False
+    log.exception("Python module PYTHON-QBITTORRENT is required. Install with 'pip install python-qbittorrent' then try again.")
+    sys.exit()    
 
 delete_dir = False
 
-# Run a uTorrent action before conversion.
-if web_ui:
-    session = requests.Session()
-    if session:
-        auth, session = _authToken(session, settings.uTorrentHost, settings.uTorrentUsername, settings.uTorrentPassword)
-        if auth and settings.uTorrentActionBefore:
-            params = {'token': auth, 'action': settings.uTorrentActionBefore, 'hash': torrent_hash}
-            _sendRequest(session, settings.uTorrentHost, settings.uTorrentUsername, settings.uTorrentPassword, params, None, "Before Function")
-            log.debug("Sending action %s to uTorrent" % settings.uTorrentActionBefore)
+qb = Client(settings.qBittorrent['host'])
+qb.login(settings.qBittorrent['username'], settings.qBittorrent['password'])
 
-if settings.uTorrent['convert']:
-    # Check for custom uTorrent output_dir
-    if settings.uTorrent['output_dir']:
-        settings.output_dir = settings.uTorrent['output_dir']
-        log.debug("Overriding output_dir to %s." % settings.uTorrent['output_dir'])
+if settings.qBittorrent['actionBefore']:
+    if settings.qBittorrent['actionBefore'] == 'pause':  # currently only support pausing
+        log.debug("Sending action %s to qBittorrent" % settings.qBittorrent['actionBefore'])
+        qb.pause(torrent_hash)
+
+if settings.qBittorrent['convert']:
+    # Check for custom qBittorrent output_dir
+    if settings.qBittorrent['output_dir']:
+        settings.output_dir = settings.qBittorrent['output_dir']
+        log.debug("Overriding output_dir to %s." % settings.qBittorrent['output_dir'])
 
     # Perform conversion.
     log.info("Performing conversion")
     settings.delete = False
     if not settings.output_dir:
+        # If the user hasn't set an output directory, go up one from the root path and create a directory there as [name]-convert
         suffix = "convert"
-        if str(sys.argv[4]) == 'single':
-            log.info("Single File Torrent")
-            settings.output_dir = os.path.join(path, ("%s-%s" % (name, suffix)))
-        else:
-            log.info("Multi File Torrent")
-            settings.output_dir = os.path.abspath(os.path.join(path, '..', ("%s-%s" % (name, suffix))))
+        settings.output_dir = os.path.abspath(os.path.join(root_path, '..', ("%s-%s" % (name, suffix))))
         if not os.path.exists(settings.output_dir):
             os.mkdir(settings.output_dir)
-        delete_dir = settings.output_dir
 
     converter = MkvtoMp4(settings)
 
-    if str(sys.argv[4]) == 'single':
-        inputfile = os.path.join(path, str(sys.argv[5]))
+    if single_file:
+        # single file
+        inputfile = content_path
         if MkvtoMp4(settings).validSource(inputfile):
             log.info("Processing file %s." % inputfile)
             try:
@@ -146,7 +108,7 @@ if settings.uTorrent['convert']:
     else:
         log.debug("Processing multiple files.")
         ignore = []
-        for r, d, f in os.walk(path):
+        for r, d, f in os.walk(root_path):
             for files in f:
                 inputfile = os.path.join(r, files)
                 if MkvtoMp4(settings).validSource(inputfile) and inputfile not in ignore:
@@ -166,21 +128,23 @@ if settings.uTorrent['convert']:
 else:
     suffix = "copy"
     # name = name[:260-len(suffix)]
-    if str(sys.argv[4]) == 'single':
+    if single_file:
         log.info("Single File Torrent")
         newpath = os.path.join(path, ("%s-%s" % (name, suffix)))
     else:
         log.info("Multi File Torrent")
-        newpath = os.path.abspath(os.path.join(path, '..', ("%s-%s" % (name, suffix))))
+        newpath = os.path.abspath(os.path.join(root_path, '..', ("%s-%s" % (name, suffix))))
+
     if not os.path.exists(newpath):
         os.mkdir(newpath)
         log.debug("Creating temporary directory %s" % newpath)
-    if str(sys.argv[4]) == 'single':
-        inputfile = os.path.join(path, str(sys.argv[5]))
+
+    if single_file:
+        inputfile = content_path
         shutil.copy(inputfile, newpath)
         log.debug("Copying %s to %s" % (inputfile, newpath))
     else:
-        for r, d, f in os.walk(path):
+        for r, d, f in os.walk(root_path):
             for files in f:
                 inputfile = os.path.join(r, files)
                 shutil.copy(inputfile, newpath)
@@ -206,12 +170,20 @@ elif label == categories[4]:
 elif label == categories[5]:
     log.info("Bypassing any further processing as per category.")
 
-# Run a uTorrent action after conversion.
-if web_ui:
-    if session and auth and settings.uTorrentActionAfter:
-        params = {'token': auth, 'action': settings.uTorrentActionAfter, 'hash': torrent_hash}
-        _sendRequest(session, settings.uTorrentHost, settings.uTorrentUsername, settings.uTorrentPassword, params, None, "After Function")
-        log.debug("Sending action %s to uTorrent" % settings.uTorrentActionAfter)
+# Run a qbittorrent action after conversion.
+if settings.qBittorrent['actionAfter']:
+    # currently only support resuming or deleting torrent
+    if settings.qBittorrent['actionAfter'] == 'resume':
+        log.debug("Sending action %s to qBittorrent" % settings.qBittorrent['actionAfter'])
+        qb.resume(torrent_hash)
+    elif settings.qBittorrent['actionAfter'] == 'delete':
+        # this will delete the torrent from qBittorrent but it WILL NOT delete the data
+        log.debug("Sending action %s to qBittorrent" % settings.qBittorrent['actionAfter'])
+        qb.delete(torrent_hash)
+    elif settings.qBittorrent['actionAfter'] == 'deletedata':
+        # this will delete the torrent from qBittorrent and delete data
+        log.debug("Sending action %s to qBittorrent" % settings.qBittorrent['actionAfter'])
+        qb.delete_permanently(torrent_hash)
 
 if delete_dir:
     if os.path.exists(delete_dir):

@@ -2,20 +2,31 @@
 
 import os
 import sys
-from autoprocess import autoProcessTV, autoProcessMovie, autoProcessTVSR, sonarr
+from autoprocess import autoProcessTV, autoProcessMovie, autoProcessTVSR, sonarr, radarr
 from readSettings import ReadSettings
 from mkvtomp4 import MkvtoMp4
 from deluge_client import DelugeRPCClient
 import logging
 from logging.config import fileConfig
 
-fileConfig(os.path.join(os.path.dirname(sys.argv[0]), 'logging.ini'), defaults={'logfilename': os.path.join(os.path.dirname(sys.argv[0]), 'info.log').replace("\\", "/")})
+logpath = '/var/log/sickbeard_mp4_automator'
+if os.name == 'nt':
+    logpath = os.path.dirname(sys.argv[0])
+elif not os.path.isdir(logpath):
+    try:
+        os.mkdir(logpath)
+    except:
+        logpath = os.path.dirname(sys.argv[0])
+configPath = os.path.abspath(os.path.join(os.path.dirname(sys.argv[0]), 'logging.ini')).replace("\\", "\\\\")
+logPath = os.path.abspath(os.path.join(logpath, 'index.log')).replace("\\", "\\\\")
+fileConfig(configPath, defaults={'logfilename': logPath})
 log = logging.getLogger("delugePostProcess")
 
 log.info("Deluge post processing started.")
 
 settings = ReadSettings(os.path.dirname(sys.argv[0]), "autoProcess.ini")
-categories = [settings.deluge['sb'], settings.deluge['cp'], settings.deluge['sonarr'], settings.deluge['sr'], settings.deluge['bypass']]
+categories = [settings.deluge['sb'], settings.deluge['cp'], settings.deluge['sonarr'], settings.deluge['radarr'], settings.deluge['sr'], settings.deluge['bypass']]
+remove = settings.deluge['remove']
 
 if len(sys.argv) < 4:
     log.error("Not enough command line parameters present, are you launching this from deluge?")
@@ -40,14 +51,22 @@ else:
     sys.exit()
 
 torrent_data = client.call('core.get_torrent_status', torrent_id, ['files', 'label'])
-torrent_files = torrent_data['files']
-category = torrent_data['label'].lower()
+try:
+    torrent_files = torrent_data[b'files']
+    category = torrent_data[b'label'].lower().decode()
+except:
+    torrent_files = torrent_data['files']
+    category = torrent_data['label'].lower()
 
 files = []
 log.debug("List of files in torrent:")
 for contents in torrent_files:
-    files.append(contents['path'])
-    log.debug(contents['path'])
+    try:
+        files.append(contents[b'path'].decode())
+        log.debug(contents[b'path'].decode())
+    except:
+        files.append(contents['path'])
+        log.debug(contents['path'])
 
 if category.lower() not in categories:
     log.error("No valid category detected.")
@@ -58,10 +77,16 @@ if len(categories) != len(set(categories)):
     sys.exit()
 
 if settings.deluge['convert']:
+    # Check for custom Deluge output_dir
+    if settings.deluge['output_dir']:
+        settings.output_dir = settings.deluge['output_dir']
+        log.debug("Overriding output_dir to %s." % settings.deluge['output_dir'])
+
     # Perform conversion.
     settings.delete = False
     if not settings.output_dir:
-        settings.output_dir = os.path.join(path, torrent_name + "-convert")
+        suffix = "convert"
+        settings.output_dir = os.path.join(path, ("%s-%s" % (torrent_name, suffix)))
         if not os.path.exists(settings.output_dir):
             os.mkdir(settings.output_dir)
         delete_dir = settings.output_dir
@@ -79,7 +104,8 @@ if settings.deluge['convert']:
 
     path = converter.output_dir
 else:
-    newpath = os.path.join(path, torrent_name + "-convert")
+    suffix = "copy"
+    newpath = os.path.join(path, ("%s-%s" % (torrent_name, suffix)))
     if not os.path.exists(newpath):
         os.mkdir(newpath)
     for filename in files:
@@ -102,9 +128,12 @@ elif (category == categories[2]):
     log.info("Passing %s directory to Sonarr." % path)
     sonarr.processEpisode(path, settings)
 elif (category == categories[3]):
+    log.info("Passing %s directory to Radarr." % path)
+    radarr.processMovie(path, settings)
+elif (category == categories[4]):
     log.info("Passing %s directory to Sickrage." % path)
     autoProcessTVSR.processEpisode(path, settings)
-elif (category == categories[4]):
+elif (category == categories[5]):
     log.info("Bypassing any further processing as per category.")
 
 if delete_dir:
@@ -114,3 +143,9 @@ if delete_dir:
             log.debug("Successfully removed tempoary directory %s." % delete_dir)
         except:
             log.exception("Unable to delete temporary directory.")
+
+if remove:
+    try:
+        client.call('core.remove_torrent', torrent_id, True)
+    except:
+        log.exception("Unable to remove torrent from deluge.")

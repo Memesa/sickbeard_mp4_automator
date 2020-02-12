@@ -22,6 +22,9 @@
 # Category for Sonarr
 #SONARR_CAT=Sonarr
 
+# Category for Radarr
+#RADARR_CAT=Radarr
+
 # Category for Sickbeard
 #SICKBEARD_CAT=Sickbeard
 
@@ -30,6 +33,9 @@
 
 # Category for bypassing any further processing but still converting
 #BYPASS_CAT=Bypass
+
+# Custom output_directory setting
+#OUTPUT_DIR=
 
 ### NZBGET POST-PROCESSING SCRIPT                                          ###
 ##############################################################################
@@ -49,11 +55,22 @@ if not(MP4folder.endswith("/")):
     MP4folder += "/"
 #DEBUG#print MP4folder+" the original is "+os.environ['NZBPO_MP4_FOLDER']
 
+output_dir = None
+if 'NZBPO_OUTPUT_DIR' in os.environ:
+    output_dir = os.environ['NZBPO_OUTPUT_DIR'].strip()
+    if len(output_dir) > 0:
+        output_dir = output_dir.replace('"', '')
+        output_dir = output_dir.replace("'", "")
+        output_dir = output_dir.replace("\\", "/")
+        if not(output_dir.endswith("/")):
+            output_dir += "/"
+        #DEBUG#print Overriding output directory
+
 sys.path.append(MP4folder)
 try:
     from readSettings import ReadSettings
     from mkvtomp4 import MkvtoMp4
-    from autoprocess import autoProcessMovie, autoProcessTV, autoProcessTVSR, sonarr
+    from autoprocess import autoProcessMovie, autoProcessTV, autoProcessTVSR, sonarr, radarr
     import logging
     from logging.config import fileConfig
 except ImportError:
@@ -62,7 +79,17 @@ except ImportError:
     sys.exit(0)
 
 # Setup Logging
-fileConfig(os.path.join(MP4folder, 'logging.ini'), defaults={'logfilename': os.path.join(MP4folder, 'info.log')})
+logpath = '/var/log/sickbeard_mp4_automator'
+if os.name == 'nt':
+    logpath = MP4folder
+elif not os.path.isdir(logpath):
+    try:
+        os.mkdir(logpath)
+    except:
+        logpath = MP4folder
+configPath = os.path.abspath(os.path.join(MP4folder, 'logging.ini')).replace("\\", "\\\\")
+logPath = os.path.abspath(os.path.join(logpath, 'index.log')).replace("\\", "\\\\")
+fileConfig(configPath, defaults={'logfilename': logPath})
 log = logging.getLogger("NZBGetPostProcess")
 
 # Determine if conversion will take place
@@ -78,11 +105,12 @@ if 'NZBOP_SCRIPTDIR' in os.environ and not os.environ['NZBOP_VERSION'][0:5] < '1
 
     couchcat = os.environ['NZBPO_CP_CAT'].lower()
     sonarrcat = os.environ['NZBPO_SONARR_CAT'].lower()
+    radarrcat = os.environ['NZBPO_RADARR_CAT'].lower()
     sickbeardcat = os.environ['NZBPO_SICKBEARD_CAT'].lower()
     sickragecat = os.environ['NZBPO_SICKRAGE_CAT'].lower()
     bypass = os.environ['NZBPO_BYPASS_CAT'].lower()
 
-    categories = [sickbeardcat, couchcat, sonarrcat, sickragecat, bypass]
+    categories = [sickbeardcat, couchcat, sonarrcat, radarrcat, sickragecat, bypass]
 
     log.debug("Path: %s" % path)
     log.debug("NZB: %s" % nzb)
@@ -161,6 +189,8 @@ if 'NZBOP_SCRIPTDIR' in os.environ and not os.environ['NZBOP_VERSION'][0:5] < '1
     settings = ReadSettings(MP4folder, "autoProcess.ini")
 
     if shouldConvert:
+        if output_dir:
+            settings.output_dir = output_dir
         converter = MkvtoMp4(settings, logger=log)
         for r, d, f in os.walk(path):
             for files in f:
@@ -185,16 +215,24 @@ if 'NZBOP_SCRIPTDIR' in os.environ and not os.environ['NZBOP_VERSION'][0:5] < '1
         autoProcessMovie.process(path, settings, nzb, status)
         sys.exit(POSTPROCESS_SUCCESS)
     elif (category.lower() == categories[2]):
+        #DEBUG#print "Sonarr Processing Activated"
         success = sonarr.processEpisode(path, settings, True)
         if success:
             sys.exit(POSTPROCESS_SUCCESS)
         else:
             sys.exit(POSTPROCESS_ERROR)
     elif (category.lower() == categories[3]):
+        #DEBUG#print "Radarr Processing Activated"
+        success = radarr.processMovie(path, settings, True)
+        if success:
+            sys.exit(POSTPROCESS_SUCCESS)
+        else:
+            sys.exit(POSTPROCESS_ERROR)
+    elif (category.lower() == categories[4]):
         #DEBUG#print "Sickrage Processing Activated"
         autoProcessTVSR.processEpisode(path, settings, nzb)
         sys.exit(POSTPROCESS_SUCCESS)
-    elif (category.lower() == categories[4]):
+    elif (category.lower() == categories[5]):
         #DEBUG#print "Bypass Further Processing"
         sys.exit(POSTPROCESS_NONE)
 

@@ -1,10 +1,6 @@
 import os
 import sys
-try:
-    from urllib.request import urlretrieve
-except ImportError:
-    from urllib import urlretrieve
-import urllib
+import requests
 try:
     from StringIO import StringIO
 except ImportError:
@@ -12,90 +8,138 @@ except ImportError:
 import tempfile
 import time
 import logging
-#from tvdb_api.tvdb_api import Tvdb
-from tvdb_api import Tvdb
+import tmdbsimple as tmdb 
 from mutagen.mp4 import MP4, MP4Cover
-from extensions import valid_output_extensions, valid_poster_extensions
+from extensions import valid_tagging_extensions, valid_poster_extensions, tmdb_api_key
+
+
+def urlretrieve(url, fn):
+    with open(fn, 'wb') as f:
+        f.write(requests.get(url, allow_redirects=True, timeout=30).content)
+    return (fn, f)
 
 
 class Tvdb_mp4:
-    def __init__(self, show, season, episode, original=None, language='en', logger=None):
+    def __init__(self, show, season, episode, original=None, language='en', logger=None, tmdbid=False):
+
+        tmdb.API_KEY = tmdb_api_key
 
         if logger:
             self.log = logger
         else:
             self.log = logging.getLogger(__name__)
 
+        if not tmdbid:
+            self.log.info("ID supplied is not a TMDB ID, attempting to convert")
+            find = tmdb.Find(show)
+            response = find.info(external_source='tvdb_id')
+            try:
+                new = find.tv_results[0]['id']
+                self.log.info("Replacing TVDB ID %s with TMDB ID %s" % (show, new))
+                show = find.tv_results[0]['id']
+            except:
+                self.log.exception("Unable to convert TVDB to TMDB")
+
         for i in range(3):
             try:
-                self.tvdb_show = Tvdb(interactive=False, cache=False, banners=True, actors=True, forceConnect=True, language=language)
+                seriesquery = tmdb.TV(show)
+                seasonquery = tmdb.TV_Seasons(show, season)
+                episodequery = tmdb.TV_Episodes(show, season, episode)
                 self.show = show
+                self.showid = show
                 self.season = season
                 self.episode = episode
                 self.rating = None
                 self.HD = None
                 self.original = original
-                self.type = 'Episode'
-                self.video_codec = None
 
-                # Gather information from theTVDB
-                self.showdata = self.tvdb_show[self.show]
-                self.seasondata = self.showdata[self.season]
-                self.episodedata = self.seasondata[self.episode]
-                self.tvdb_id = self.showdata['id']
-                self.imdb_id = self.showdata['imdbId']
+                # Gather information from TMDB
+                self.showdata = seriesquery.info(language=language)
+                self.seasondata = seasonquery.info(language=language)
+                self.episodedata = episodequery.info(language=language)
+                self.credit = episodequery.credits()
 
-                self.show = self.showdata['seriesname']
-                self.genre = self.showdata['genre']
-                self.network = self.showdata['network']
-                self.contentrating = self.showdata['rating']
+                self.show = self.showdata['name']
+                self.genre = self.showdata['genres']
+                self.network = self.showdata['networks']
+                # self.contentrating = self.showdata['rating']
 
-                self.title = self.episodedata['episodename']
+                self.title = self.episodedata['name']
                 self.description = self.episodedata['overview']
-                self.airdate = self.episodedata['firstaired']
-                self.director = self.episodedata['director']
-                self.writer = self.episodedata['writer']
+                self.airdate = self.episodedata['air_date']
 
                 # Generate XML tags for Actors/Writers/Directors
                 self.xml = self.xmlTags()
                 break
             except Exception as e:
-                self.log.exception("Failed to connect to TVDB, trying again in 20 seconds.")
+                self.log.exception("Failed to connect to TMDB, trying again in 20 seconds.")
                 time.sleep(20)
-                raw_input("wait")
 
+    def checkLanguage(self, language):
+        if not language:
+            return None
+
+        if len(language) < 2:
+            self.log.error("Unable to set tag language [tag-language].")
+            return None
+
+        try:
+            from babelfish import Language
+        except:
+            self.log.exception("Unable to important Language from babelfish [tag-language].")
+            return None
+
+        try:
+            return Language(language).alpha3
+        except:
+            self.log.exception("Unable to set tag language [tag-language].")
+            return None
     def writeTags(self, mp4Path, artwork=True, thumbnail=False):
         self.log.info("Tagging file: %s." % mp4Path)
         ext = os.path.splitext(mp4Path)[1][1:]
-        if ext.lower() not in valid_output_extensions:
+        if ext not in valid_tagging_extensions:
             self.log.error("File is not the correct format.")
-            sys.exit()
+            return False
 
         video = MP4(mp4Path)
-        checktags = {
-            "tvsh": self.show,
-            "\xa9nam": self.title,
-            "tven": self.title,
-            "desc": self.shortDescription(),
-            "ldes": self.description,
-            #"tvsn": self.season,
-            "disk": (int(self.season), 0),
-            "\xa9alb": self.show + ", Season " + str(self.season),
-            #"tves": (int(self.episode), len(self.seasondata)),
-            "trkn": (int(self.episode), len(self.seasondata)),
-            #"stik": 10,
-        }
-        if self.network is not None:
-            checktags['tven'] = self.network
+        checktags = {}
+        checktags["tvsh"] = self.show  # TV show title
+        checktags["\xa9nam"] = self.title  # Video title
+        checktags["tven"] = self.title  # Episode title
+        checktags["desc"] = self.shortDescription()  # Short description
+        checktags["ldes"] = self.description  # Long description (same a short for tv)
+        network = [x['name'] for x in self.network]
+        checktags["tvnn"] = network  # Network
         if self.airdate != "0000-00-00":
-            checktags["\xa9day"] = self.airdate
+            checktags["\xa9day"] = self.airdate  # Airdate
+        checktags["tvsn"] = [self.season]  # Season number
+        checktags["disk"] = [(int(self.season), 0)],
+        checktags["disk"] = [(int(self.season), 0)]  # Season number as disk
+        checktags["\xa9alb"] = self.show + ", Season " + str(self.season)  # iTunes Album as Season
+        checktags["tves"] = [self.episode]  # Episode number
+        checktags["trkn"] = [(int(self.episode), len(self.seasondata))]  # Episode number iTunes
+        #checktags["stik"] = [10]  # TV show iTunes category
         #if self.HD is not None:
         #    checktags["hdvd"] = self.HD
         if self.genre is not None:
-            try:
-                checktags["\xa9gen"] = self.genre[1:-1].split('|')[0]
-            except AttributeError:
-                checktags["\xa9gen"] = self.genre[0]
+            genre = None
+            for g in self.genre:
+                if genre is None:
+                    genre = g['name']
+                    break
+            checktags["\xa9gen"] = genre
+            # video["\xa9gen"] = self.genre.replace('|', ',')[1:-1]  # Genre(s)
+        #checktags["----:com.apple.iTunes:iTunMOVI"] = self.xml  # XML - see xmlTags method
+        # video["----:com.apple.iTunes:iTunEXTC"] = self.setRating()  # iTunes content rating
+
+        if artwork:
+            path = self.getArtwork(mp4Path, thumbnail=thumbnail)
+            if path is not None:
+                cover = open(path, 'rb').read()
+                if path.endswith('png'):
+                    checktags["covr"] = [MP4Cover(cover, MP4Cover.FORMAT_PNG)]  # png poster
+                else:
+                    checktags["covr"] = [MP4Cover(cover, MP4Cover.FORMAT_JPEG)]  # jpeg poster
         
         ProcessTags = False
         for keys, values in checktags.items():
@@ -106,6 +150,7 @@ class Tvdb_mp4:
                 if video.tags[keys] != [values]:
                     self.log.debug(keys + " tag does not match and will be updated")
                     ProcessTags = True
+                    break
             else:
                 self.log.debug(keys + " will be added")
                 ProcessTags = True
@@ -121,28 +166,29 @@ class Tvdb_mp4:
             video["\xa9nam"] = self.title  # Video title
             video["tven"] = self.title  # Episode title
             video["desc"] = self.shortDescription()  # Short description
-            video["ldes"] = self.description  # Long description (same as short for tv)
-            if self.network is not None:
-                video["tvnn"] = self.network  # Network
+            video["ldes"] = self.description  # Long description (same a short for tv)
+            network = [x['name'] for x in self.network]
+            video["tvnn"] = network  # Network
             if self.airdate != "0000-00-00":
                 video["\xa9day"] = self.airdate  # Airdate
-#           video["tvsn"] = [self.season]  # Season number
+            video["tvsn"] = [self.season]  # Season number
             video["disk"] = [(int(self.season), 0)]  # Season number as disk
             video["\xa9alb"] = self.show + ", Season " + str(self.season)  # iTunes Album as Season
-#           video["tves"] = [self.episode]  # Episode number
+            video["tves"] = [self.episode]  # Episode number
             video["trkn"] = [(int(self.episode), len(self.seasondata))]  # Episode number iTunes
-#           video["stik"] = [10]  # TV show iTunes category
-#           if self.HD is not None:
-#               video["hdvd"] = self.HD
+            #video["stik"] = [10]  # TV show iTunes category
+            #if self.HD is not None:
+            #    video["hdvd"] = self.HD
             if self.genre is not None:
-                #video["\xa9gen"] = self.genre[1:-1].split('|')[0]
-                try:
-                    video["\xa9gen"] = self.genre[1:-1].split('|')[0]
-                except AttributeError:
-                    video["\xa9gen"] = self.genre[0]
+                genre = None
+                for g in self.genre:
+                    if genre is None:
+                        genre = g['name']
+                        break
+                video["\xa9gen"] = genre
                 # video["\xa9gen"] = self.genre.replace('|', ',')[1:-1]  # Genre(s)
-#           video["----:com.apple.iTunes:iTunMOVI"] = self.xml  # XML - see xmlTags method
-#           video["----:com.apple.iTunes:iTunEXTC"] = self.setRating()  # iTunes content rating
+            #video["----:com.apple.iTunes:iTunMOVI"] = self.xml  # XML - see xmlTags method
+            # video["----:com.apple.iTunes:iTunEXTC"] = self.setRating()  # iTunes content rating
 
             if artwork:
                 path = self.getArtwork(mp4Path, thumbnail=thumbnail)
@@ -152,10 +198,10 @@ class Tvdb_mp4:
                         video["covr"] = [MP4Cover(cover, MP4Cover.FORMAT_PNG)]  # png poster
                     else:
                         video["covr"] = [MP4Cover(cover, MP4Cover.FORMAT_JPEG)]  # jpeg poster
-#           if self.original:
-#               video["\xa9too"] = "MDH:" + os.path.basename(self.original)
-#           else:
-#               video["\xa9too"] = "MDH:" + os.path.basename(mp4Path)
+            if self.original:
+                video["\xa9too"] = "MDH:" + os.path.basename(self.original)
+            else:
+                video["\xa9too"] = "MDH:" + os.path.basename(mp4Path)
             MP4(mp4Path).delete(mp4Path)
             for i in range(3):
                 try:
@@ -166,10 +212,8 @@ class Tvdb_mp4:
                 except IOError as e:
                     self.log.exception("There was a problem writing the tags. Retrying.")
                     time.sleep(5)
+        return False
 
-    def downloadTrailer(self, mp4Path):
-        return
-                    
     def setHD(self, width, height):
         if width >= 1900 or height >= 1060:
             self.HD = [2]
@@ -211,6 +255,7 @@ class Tvdb_mp4:
         castheader = "<key>cast</key><array>\n"
         writerheader = "<key>screenwriters</key><array>\n"
         directorheader = "<key>directors</key><array>\n"
+        producerheader = "<key>producers</key><array>\n"
         subfooter = "</array>\n"
         footer = "</dict></plist>\n"
 
@@ -219,26 +264,28 @@ class Tvdb_mp4:
 
         # Write actors
         output.write(castheader)
-        for a in self.showdata['_actors'][:5]:
-            if a['name'] is not None:
+        for a in self.credit['cast'][:5]:
+            if a is not None and a['name'] is not None:
                 output.write("<dict><key>name</key><string>%s</string></dict>\n" % a['name'].encode('ascii', errors='ignore'))
         output.write(subfooter)
-
-        # Write screenwriterr
-        if self.writer is not None:
-            output.write(writerheader)
-            for name in self.writer.split("|"):
-                if name != "":
-                    output.write("<dict><key>name</key><string>%s</string></dict>\n" % name.encode('ascii', errors='ignore'))
-            output.write(subfooter)
-
+        # Write screenwriters
+        output.write(writerheader)
+        for w in [x for x in self.credit['crew'] if x['department'].lower() == "writing"][:5]:
+            if w is not None:
+                output.write("<dict><key>name</key><string>%s</string></dict>\n" % w['name'].encode('ascii', 'ignore'))
+        output.write(subfooter)
         # Write directors
-        if self.director is not None:
-            output.write(directorheader)
-            for name in self.director.split("|"):
-                if name != "":
-                    output.write("<dict><key>name</key><string>%s</string></dict>\n" % name.encode('ascii', errors='ignore'))
-            output.write(subfooter)
+        output.write(directorheader)
+        for d in [x for x in self.credit['crew'] if x['department'].lower() == "directing"][:5]:
+            if d is not None:
+                output.write("<dict><key>name</key><string>%s</string></dict>\n" % d['name'].encode('ascii', 'ignore'))
+        output.write(subfooter)
+        # Write producers
+        output.write(producerheader)
+        for p in [x for x in self.credit['crew'] if x['department'].lower() == "production"][:5]:
+            if p is not None:
+                output.write("<dict><key>name</key><string>%s</string></dict>\n" % p['name'].encode('ascii', 'ignore'))
+        output.write(subfooter)
 
         # Close XML
         output.write(footer)
@@ -258,26 +305,24 @@ class Tvdb_mp4:
         # Pulls down all the poster metadata for the correct season and sorts them into the Poster object
         if poster is None:
             if thumbnail:
-                try:
-                    poster = urlretrieve(self.episodedata['filename'], os.path.join(tempfile.gettempdir(), "poster-tvdb.jpg"))[0]
-                except:
-                    self.log.error("Exception while retrieving poster %s.", str(err))
-                    poster = None
+                poster_path = self.episodedata['still_path']
             else:
-                posters = posterCollection()
+                poster_path = self.seasondata['poster_path']
+            if not poster_path:
+                self.log.warning("No poster found")
+                return None
+            savepath = os.path.join(tempfile.gettempdir(), "poster-%s%s%s.jpg" % (self.showid, self.season, self.episode))
+            if os.path.exists(savepath):
                 try:
-                    for bannerid in self.showdata['_banners']['season']['season'].keys():
-                        if str(self.showdata['_banners']['season']['season'][bannerid]['season']) == str(self.season):
-                            poster = Poster()
-                            poster.ratingcount = int(self.showdata['_banners']['season']['season'][bannerid]['ratingcount'])
-                            if poster.ratingcount > 0:
-                                poster.rating = float(self.showdata['_banners']['season']['season'][bannerid]['rating'])
-                            poster.bannerpath = self.showdata['_banners']['season']['season'][bannerid]['_bannerpath']
-                            posters.addPoster(poster)
-
-                    poster = urlretrieve(posters.topPoster().bannerpath, os.path.join(tempfile.gettempdir(), "poster.jpg"))[0]
+                    os.remove(savepath)
                 except:
-                    poster = None
+                    import random
+                    savepath = os.path.join(tempfile.gettempdir(), "poster-%s%s%s%s.jpg" % (self.showid, self.season, self.episode, random.randint(1, 9999)))
+            try:
+                poster = urlretrieve("https://image.tmdb.org/t/p/original" + poster_path, savepath)[0]
+            except Exception as e:
+                self.log.exception("Exception while retrieving poster %s.", str(e))
+                poster = None
         return poster
 
 
@@ -287,26 +332,6 @@ class Poster:
         self.rating = rating
         self.bannerpath = bannerpath
         self.ratingcount = ratingcount
-
-
-class posterCollection:
-    def __init__(self):
-        self.posters = []
-
-    def topPoster(self):
-        # Determines which poster has the highest rating, returns the Poster object
-        top = None
-        for poster in self.posters:
-            if top is None:
-                top = poster
-            elif poster.rating > top.rating:
-                top = poster
-            elif poster.rating == top.rating and poster.ratingcount > top.ratingcount:
-                top = poster
-        return top
-
-    def addPoster(self, inputPoster):
-        self.posters.append(inputPoster)
 
 
 def main():
@@ -322,6 +347,7 @@ def main():
             tvdb_mp4_instance.writeTags(mp4)
         else:
             print("Wrong file type")
+
 
 if __name__ == '__main__':
     main()
