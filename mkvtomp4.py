@@ -212,7 +212,6 @@ class MkvtoMp4:
 
     # Process a file from start to finish, with checking to make sure formats are compatible with selected settings
     def process(self, inputfile, reportProgress=False, original=None, tagmp4=None, info=None):
-
         self.log.debug("Process started.")
 
         delete = self.delete
@@ -222,10 +221,10 @@ class MkvtoMp4:
         processReason = []
         preopts = None
         postopts = None
-        if not self.validSource(inputfile):
-            return False
 
-        if self.needProcessing(inputfile):
+        info = self.isValidSource(inputfile) if not info else info
+
+        if info:
             options, preopts, postopts, ripsubopts, processReason = self.generateOptions(inputfile, original=original, tagmp4=tagmp4, info=info)
             input_dir, filename, input_extension = self.parseFile(inputfile)
             if not processfile and not input_extension.lower() in valid_output_extensions:
@@ -233,7 +232,7 @@ class MkvtoMp4:
                 processReason.append("input format is incompatible")
         
         if processfile:
-            options, preopts, postopts, ripsubopts, processReason = self.generateOptions(inputfile, original=original)
+            options, preopts, postopts, ripsubopts, processReason = self.generateOptions(inputfile, original=original, tagmp4=tagmp4, info=info)
             if not options:
                 self.log.error("Error converting, inputfile %s had a valid extension but returned no data. Either the file does not exist, was unreadable, or was an incorrect format." % inputfile)
                 return False
@@ -267,81 +266,71 @@ class MkvtoMp4:
 
             self.log.debug("%s created from %s successfully." % (outputfile, inputfile))
 
-        else:
-            outputfile = inputfile
-            if self.output_dir is not None:
-                try:
-                    outputfile = os.path.join(self.output_dir, os.path.split(inputfile)[1])
-                    self.log.debug("Outputfile set to %s." % outputfile)
-                    shutil.copy(inputfile, outputfile)
-                except Exception as e:
-                    self.log.exception("Error moving file to output directory.")
-                    delete = False
-            else:
-                delete = False
-
-        if delete:
-            self.log.debug("Attempting to remove %s." % inputfile)
-            if self.removeFile(inputfile):
-                self.log.debug("%s deleted." % inputfile)
-                deleted = True
-            else:
-                self.log.error("Couldn't delete %s." % inputfile)
-        if self.downloadsubs:
-            for subfile in self.deletesubs:
-                self.log.debug("Attempting to remove subtitle %s." % subfile)
-                if self.removeFile(subfile):
-                    self.log.debug("Subtitle %s deleted." % subfile)
+        #else:
+            if outputfile == inputfile:
+                self.deletesubs = set()
+                if self.output_dir is not None:
+                    try:
+                        outputfile = os.path.join(self.output_dir, os.path.split(inputfile)[1])
+                        self.log.debug("Outputfile set to %s." % outputfile)
+                        shutil.copy(inputfile, outputfile)
+                    except:
+                        self.log.exception("Error moving file to output directory.")
+                        delete = False
                 else:
-                    self.log.debug("Unable to delete subtitle %s." % subfile)
-            self.deletesubs = set()
+                    delete = False
 
-        dim = self.getDimensions(outputfile)
-        input_extension = self.parseFile(inputfile)[2].lower()
-        output_extension = self.parseFile(outputfile)[2].lower()
+            if delete:
+                self.log.debug("Attempting to remove %s." % inputfile)
+                if self.removeFile(inputfile):
+                    self.log.debug("%s deleted." % inputfile)
+                    deleted = True
+                else:
+                    self.log.error("Couldn't delete %s." % inputfile)
 
-        return {'input': inputfile,
-                'input_extension': input_extension,
-                'input_deleted': deleted,
-                'output': outputfile,
-                'output_extension': output_extension,
-                'options': options,
-                'preopts': preopts,
-                'postopts': postopts,
-                'x': dim['x'],
-                'y': dim['y']}
+                for subfile in self.deletesubs:
+                    self.log.debug("Attempting to remove subtitle %s." % subfile)
+                    if self.removeFile(subfile):
+                        self.log.debug("Subtitle %s deleted." % subfile)
+                    else:
+                        self.log.debug("Unable to delete subtitle %s." % subfile)
+                self.deletesubs = set()
 
-    # Determine if a source video file is in a valid format
-    def validSource(self, inputfile):
-        input_extension = self.parseFile(inputfile)[2]
-        # Make sure the input_extension is some sort of recognized extension, and that the file actually exists
-        if (input_extension.lower() in valid_input_extensions or input_extension.lower() in valid_output_extensions):
-            if (os.path.isfile(inputfile)):
-                self.log.debug("%s is valid." % inputfile)
-                return True
-            else:
-                self.log.debug("%s not found." % inputfile)
-                return False
-        else:
-            self.log.debug("%s is invalid with extension %s." % (inputfile, input_extension))
-            return False
+            dim = self.getDimensions(outputfile)
+            input_extension = self.parseFile(inputfile)[2].lower()
+            output_extension = self.parseFile(outputfile)[2].lower()
 
-    # Determine if a file meets the criteria for processing
-    def needProcessing(self, inputfile):
-        input_extension = self.parseFile(inputfile)[2]
-        # Make sure input and output extensions are compatible. If processMP4 is true, then make sure the input extension is a valid output extension and allow to proceed as well
-        if (input_extension.lower() in valid_input_extensions or (self.processMP4 is True and input_extension.lower() in valid_output_extensions)) and self.output_extension.lower() in valid_output_extensions:
-            self.log.debug("%s needs processing." % inputfile)
-            return True
-        else:
-            self.log.debug("%s does not need processing." % inputfile)
-            return False
+            return {'input': inputfile,
+                    'input_extension': input_extension,
+                    'input_deleted': deleted,
+                    'output': outputfile,
+                    'output_extension': output_extension,
+                    'options': options,
+                    'preopts': preopts,
+                    'postopts': postopts,
+                    'x': dim['x'],
+                    'y': dim['y']}
+        return None
+
+    # Determine if a file can be read by FFPROBE
+    def isValidSource(self, inputfile):
+        info = self.converter.probe(inputfile)
+        if info and not info.video:
+            return None
+        return info
+
+    def isValidSubtitleSource(self, inputfile):
+        info = self.converter.probe(inputfile)
+        if info:
+            if len(info.subtitle) < 1 or info.video or len(info.audio) > 0:
+                return None
+        return info
 
     # Get values for width and height to be passed to the tagging classes for proper HD tags
     def getDimensions(self, inputfile):
-        if self.validSource(inputfile):
-            info = self.converter.probe(inputfile)
+        info = self.converter.probe(inputfile)
 
+        if info:
             self.log.debug("Height: %s" % info.video.video_height)
             self.log.debug("Width: %s" % info.video.video_width)
 
@@ -353,19 +342,15 @@ class MkvtoMp4:
 
     # Estimate the video bitrate
     def estimateVideoBitrate(self, info):
-        if info.video.bitrate:
-            self.log.debug("Video bitrate is %s." % (str(int(info.video.bitrate / 1000))))
-            return int(info.video.bitrate / 1000)
-        else:
-            total_bitrate = info.format.bitrate
-            audio_bitrate = 0
-            for a in info.audio:
-                audio_bitrate += a.bitrate
+        total_bitrate = info.format.bitrate
+        audio_bitrate = 0
+        for a in info.audio:
+            audio_bitrate += a.bitrate
 
-            self.log.debug("Total bitrate is %s." % info.format.bitrate)
-            self.log.debug("Total audio bitrate is %s." % audio_bitrate)
-            self.log.debug("Estimated video bitrate is %s." % (total_bitrate - audio_bitrate))
-            return ((total_bitrate - audio_bitrate) / 1000) * .95
+        self.log.debug("Total bitrate is %s." % info.format.bitrate)
+        self.log.debug("Total audio bitrate is %s." % audio_bitrate)
+        self.log.debug("Estimated video bitrate is %s." % (total_bitrate - audio_bitrate))
+        return ((total_bitrate - audio_bitrate) / 1000) * .95
 
     # Generate a JSON formatter dataset with the input and output information and ffmpeg command for a theoretical conversion
     def jsonDump(self, inputfile, original=None):
@@ -379,8 +364,10 @@ class MkvtoMp4:
         dump["ffmpeg_commands"] = []
         dump["ffmpeg_commands"].append(" ".join(str(item) for item in cmds))
         for suboptions in dump["ripsubopts"]:
+            print(suboptions)
             subparsed = self.converter.parse_options(suboptions)
-            suboutputfile = self.getSubOutputFileFromOptions(inputfile, suboptions)
+            extension = self.getSubExtensionFromCodec(suboptions['format'])
+            suboutputfile = self.getSubOutputFileFromOptions(inputfile, suboptions, extension)
             subcmds = self.converter.ffmpeg.generateCommands(inputfile, suboutputfile, subparsed)
             dump["ffmpeg_commands"].append(" ".join(str(item) for item in subcmds))
 
@@ -398,17 +385,58 @@ class MkvtoMp4:
             output['error'] = "Invalid input, unable to read"
         return output
 
+    # Pass over audio and subtitle streams to ensure the language properties are safe
+    def safeLanguage(self, info):
+        overrideLang = (self.awl is not None)
+
+        # Loop through audio streams and clean up language metadata by standardizing undefined languages and applying the ADL setting
+        for a in info.audio:
+            try:
+                if a.metadata['language'].strip() == "" or a.metadata['language'] is None:
+                    a.metadata['language'] = 'und'
+            except KeyError:
+                a.metadata['language'] = 'und'
+
+            # Set undefined language to default language if specified
+            if self.adl is not None and a.metadata['language'] == 'und':
+                self.log.debug("Undefined language detected, defaulting to %s." % self.adl)
+                a.metadata['language'] = self.adl
+
+            if (self.awl and a.metadata['language'].lower() in self.awl):
+                overrideLang = False
+
+        if overrideLang and self.allow_language_relax:
+            self.awl = None
+            self.log.info("No audio streams detected in any appropriate language, relaxing restrictions [allow-audio-language-relax].")
+
+        # Prep subtitle streams by cleaning up languages and setting SDL
+        for s in info.subtitle:
+            try:
+                if s.metadata['language'] == "" or s.metadata['language'] is None:
+                    s.metadata['language'] = 'und'
+            except KeyError:
+                s.metadata['language'] = 'und'
+
+            # Set undefined language to default language if specified
+            if self.sdl is not None and s.metadata['language'] == 'und':
+                self.log.debug("Undefined language detected, defaulting to [%s]." % self.sdl)
+                s.metadata['language'] = self.sdl
+
     # Generate a dict of options to be passed to FFMPEG based on selected settings and the source file parameters and streams
-    def generateOptions(self, inputfile, original=None, processfile = False, processReason = [], tagmp4=None):
+    def generateOptions(self, inputfile, original=None, processfile = False, processReason = [], tagmp4=None, info=None,):
         # Get path information from the input file
         input_dir, filename, input_extension = self.parseFile(inputfile)
 
         ripsubopts = []
 
-        info = self.converter.probe(inputfile)
+        info = self.converter.probe(inputfile) if not info else info
+
         if not info:
             self.log.error("FFProbe returned no value for inputfile %s (exists: %s), either the file does not exist or is not a format FFPROBE can read." % (inputfile, os.path.exists(inputfile)))
-            return None, None, None
+            return None, None, None, None
+
+        self.safeLanguage(info)
+
         try:
             self.log.info("Input Data")
             self.log.info(json.dumps(info.toJson(), sort_keys=False, indent=4))
@@ -461,6 +489,7 @@ class MkvtoMp4:
             vbitrate = self.video_bitrate
             processReason.append("video bitrate is too high (" + str(vbr) + " kbps)")
 
+        #vwidth = self.video_width                         
         if self.video_width is not None and self.video_width < info.video.video_width:
             self.log.debug("Video width is over the max width, it will be downsampled. Video stream can no longer be copied.")
             vdebug = vdebug + ".video-max-width"
@@ -504,27 +533,6 @@ class MkvtoMp4:
 
         # Audio streams
         self.log.info("Reading audio streams.")
-
-        overrideLang = (self.awl is not None)
-        # Loop through audio streams and clean up language metadata by standardizing undefined languages and applying the ADL setting
-        for a in info.audio:
-            try:
-                if a.metadata['language'].strip() == "" or a.metadata['language'] is None:
-                    a.metadata['language'] = 'und'
-            except KeyError:
-                a.metadata['language'] = 'und'
-
-            # Set undefined language to default language if specified
-            if self.adl is not None and a.metadata['language'] == 'und':
-                self.log.debug("Undefined language detected, defaulting to [%s]." % self.adl)
-                a.metadata['language'] = self.adl
-
-            if (self.awl and a.metadata['language'].lower() in self.awl):
-                overrideLang = False
-
-        if overrideLang:
-            self.awl = None
-            self.log.info("No audio streams detected in any appropriate language, relaxing restrictions so there will be some audio stream present.")
 
         # Reorder audio streams based on the approved audio languages, mirrors the order present from the options
         audio_streams = info.audio
