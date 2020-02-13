@@ -8,7 +8,6 @@ except ImportError:
     import ConfigParser as configparser
 import logging
 from extensions import *
-from babelfish import Language
 
 
 class ReadSettings:
@@ -88,7 +87,8 @@ class ReadSettings:
                         'audio-channel-maxbitrate': '256',
                         'audio-copy-original': 'False',
                         'audio-first-track-of-language': 'False',
-                        'sort-tracks-by-language': 'False',
+                        'allow-audio-language-relax': 'True',
+                        'sort-streams': 'False',
                         'prefer-more-channels': 'True',
                         'video-codec': 'h264, x264',
                         'video-bitrate': '',
@@ -101,12 +101,12 @@ class ReadSettings:
                         'use-hevc-qsv-decoder': 'False',
                         'enable_dxva2_gpu_decode': 'False',
                         'subtitle-codec': 'mov_text',
+                        'subtitle-codec-image-based': '',
                         'subtitle-language': '',
                         'subtitle-default-language': '',
                         'subtitle-encoding': '',
-                        'bad-internal-subtitle-sources': 'pgssub, hdmv_pgs_subtitle, s_hdmv/pgs, dvdsub, dvd_subtitle, dvb_teletext, dvb_subtitle',
-                        'bad-external-subtitle-sources': 'dvdsub, dvd_subtitle, dvb_teletext, dvb_subtitle',
-                        'convert-mp4': 'False',
+                        'burn-subtitles': 'False',
+                        'process-same-extensions': 'False',
                         'force-convert': 'False',
                         'fullpathguess': 'True',
                         'tagfile': 'True',
@@ -117,7 +117,6 @@ class ReadSettings:
                         'embed-subs': 'True',
                         'embed-only-internal-subs': 'False',
                         'sub-providers': '',
-                        'permissions': '777',
                         'post-process': 'False',
                         'pix-fmt': '',
                         'preopts': '',
@@ -214,7 +213,12 @@ class ReadSettings:
                          'refresh': 'true',
                          'token': ''}
 
-        defaults = {'SickBeard': sb_defaults, 'CouchPotato': cp_defaults, 'Sonarr': sonarr_defaults, 'Radarr': radarr_defaults, 'MP4': mp4_defaults, 'uTorrent': utorrent_defaults, 'qBittorrent': qbt_defaults, 'SABNZBD': sab_defaults, 'Sickrage': sr_defaults, 'Deluge': deluge_defaults, 'Plex': plex_defaults}
+        # Permissions
+        permissions_defaults = {'chmod': '0755',
+                                'uid': '-1',
+                                'gid': '-1'}
+
+        defaults = {'SickBeard': sb_defaults, 'CouchPotato': cp_defaults, 'Sonarr': sonarr_defaults, 'Radarr': radarr_defaults, 'MP4': mp4_defaults, 'uTorrent': utorrent_defaults, 'qBittorrent': qbt_defaults, 'SABNZBD': sab_defaults, 'Sickrage': sr_defaults, 'Deluge': deluge_defaults, 'Plex': plex_defaults, 'Permissions': permissions_defaults}
         write = False  # Will be changed to true if a value is missing from the config file and needs to be written
 
         config = configparser.SafeConfigParser()
@@ -332,18 +336,20 @@ class ReadSettings:
 
         self.audio_first_language_track = config.getboolean(section, "audio-first-track-of-language")  # Only take the first audio track in a whitelisted language, then no more
 
-        self.sort_by_language = config.getboolean(section, "sort-tracks-by-language")  # Reorders audio track output based on the listed languages
+        self.allow_language_relax = config.getboolean(section, "allow-audio-language-relax")  # If not audio streams in the designed languages are found, allow the audio settings to relax to have some audio
+
+        self.sort_streams = config.getboolean(section, "sort-streams")  # Reorders audio track output based on the listed languages and channels
 
         self.prefer_more_channels = config.getboolean(section, "prefer-more-channels")  # When choosing default audio track, prefer tracks with more channels
 
-        self.iOS = config.get(section, "ios-audio")  # Creates a second audio channel if the standard output methods are different from this for iOS compatability
-        if self.iOS == "" or self.iOS.lower() in ['false', 'no', 'f', '0']:
+        self.iOS = config.get(section, "ios-audio").lower().strip()  # Creates a second audio channel if the standard output methods are different from this for iOS compatability
+        if self.iOS == "" or self.iOS in ['false', 'no', 'f', '0']:
             self.iOS = False
         else:
-            if self.iOS.lower() in ['true', 'yes', 't', '1']:
+            if self.iOS in ['true', 'yes', 't', '1']:
                 self.iOS = ['aac']
             else:
-                self.iOS = self.iOS.lower().replace(' ', '').split(',')
+                self.iOS = self.iOS.replace(' ', '').split(',')
 
         self.iOSFirst = config.getboolean(section, "ios-first-track-only")  # Enables the iOS audio option only for the first track
 
@@ -352,6 +358,13 @@ class ReadSettings:
         self.iOSfilter = config.get(section, "ios-audio-filter").lower().strip()  # iOS audio filter
         if self.iOSfilter == '':
             self.iOSfilter = None
+
+        try:
+            self.burn_subtitles = config.getboolean(section, "burn-subtitles")
+            if self.burn_subtitles:
+                self.burn_subtitles = "any"
+        except:
+            self.burn_subtitles = config.get(section, "burn-subtitles").lower().strip()  # Option to burn subtitles
 
         self.downloadsubs = config.getboolean(section, "download-subs")  # Enables downloading of subtitles from the internet sources using subliminal
         if self.downloadsubs:
@@ -370,13 +383,6 @@ class ReadSettings:
         self.embedsubs = config.getboolean(section, 'embed-subs')
 
         self.embedonlyinternalsubs = config.getboolean(section, 'embed-only-internal-subs')
-
-        self.permissions = config.get(section, 'permissions')
-        try:
-            self.permissions = int(self.permissions, 8)
-        except:
-            log.exception("Invalid permissions, defaulting to 777.")
-            self.permissions = int("0777", 8)
 
         try:
             self.postprocess = config.getboolean(section, 'post-process')
@@ -455,8 +461,8 @@ class ReadSettings:
             self.vprofile = self.vprofile.lower().strip().replace(' ', '').split(',')
 
         self.qsv_decoder = config.getboolean(section, "use-qsv-decoder-with-encoder")  # Use Intel QuickSync Decoder when using QuickSync Encoder
-        self.hevc_qsv_decoder = config.getboolean( section, "use-hevc-qsv-decoder") #only supported on 6th gen intel and up.
-        self.dxva2_decoder = config.getboolean( section, "enable_dxva2_gpu_decode" )
+        self.hevc_qsv_decoder = config.getboolean(section, "use-hevc-qsv-decoder")  # only supported on 6th gen intel and up.
+        self.dxva2_decoder = config.getboolean(section, "enable_dxva2_gpu_decode")
         self.pix_fmt = config.get(section, "pix-fmt").strip().lower()
         if self.pix_fmt == '':
             self.pix_fmt = None
@@ -478,24 +484,11 @@ class ReadSettings:
             log.warning("Invalid subtitle codec, defaulting to '%s'." % self.scodec)
         else:
             self.scodec = self.scodec.replace(' ', '').split(',')
-
-        '''
-        if self.embedsubs:
-            if len(self.scodec) > 1:
-                log.warning("Can only embed one subtitle type, defaulting to 'mov_text'.")
-                self.scodec = ['mov_text']
-            if self.scodec[0] not in valid_internal_subcodecs:
-                log.warning("Invalid interal subtitle codec %s, defaulting to 'mov_text'." % self.scodec[0])
-                self.scodec = ['mov_text']
+        self.scodec_image = config.get(section, 'subtitle-codec-image-based').strip().lower()
+        if not self.scodec_image or self.scodec_image == "":
+            self.scodec_image = []
         else:
-            for codec in self.scodec:
-                if codec not in valid_external_subcodecs:
-                    log.warning("Invalid external subtitle codec %s, ignoring." % codec)
-                    self.scodec.remove(codec)
-            if len(self.scodec) == 0:
-                log.warning("No valid subtitle formats found, defaulting to 'srt'.")
-                self.scodec = ['srt']
-        '''
+            self.scodec_image = self.scodec_image.replace(' ', '').split(',')
 
         self.swl = config.get(section, 'subtitle-language').strip().lower()  # List of acceptable languages for subtitle streams to be carried over from the original file, separated by a comma. Blank for all
         if self.swl == '':
@@ -506,19 +499,6 @@ class ReadSettings:
         self.subencoding = config.get(section, 'subtitle-encoding').strip().lower()
         if self.subencoding == '':
             self.subencoding = None
-
-        # Bad subtitle codec formats for both internal and external destinations
-        self.bad_internal_subtitle_codecs = config.get(section, 'bad-internal-subtitle-sources').strip().lower().replace(' ', '')
-        if self.bad_internal_subtitle_codecs == '':
-            self.bad_internal_subtitle_codecs = []
-        else:
-            self.bad_internal_subtitle_codecs = self.bad_internal_subtitle_codecs.split(",")
-
-        self.bad_external_subtitle_codecs = config.get(section, 'bad-external-subtitle-sources').strip().lower().replace(' ', '')
-        if self.bad_external_subtitle_codecs == '':
-            self.bad_external_subtitle_codecs = []
-        else:
-            self.bad_external_subtitle_codecs = self.bad_external_subtitle_codecs.split(",")
 
         self.adl = config.get(section, 'audio-default-language').strip().lower()  # What language to default an undefinied audio language tag to. If blank, it will remain undefined. This is useful for single language releases which tend to leave things tagged as und
         if self.adl == "" or len(self.adl) > 3:
@@ -535,24 +515,14 @@ class ReadSettings:
         if self.output_dir is not None:
             if not os.path.isdir(self.output_dir):
                 os.makedirs(self.output_dir)
-        self.processMP4 = config.getboolean(section, "convert-mp4")  # Determine whether or not to reprocess mp4 files or just tag them
+        self.process_same_extensions = config.getboolean(section, "process-same-extensions")  # Determine whether or not to reprocess mp4 files or just tag them
         self.forceConvert = config.getboolean(section, "force-convert")  # Force conversion even if everything is the same
         if self.forceConvert:
-            self.processMP4 = True
+            self.process_same_extensions = True
             log.warning("Force-convert is true, so convert-mp4 is being overridden to true as well")
         self.fullpathguess = config.getboolean(section, "fullpathguess")  # Guess using the full path or not
         self.tagfile = config.getboolean(section, "tagfile")  # Tag files with metadata
         self.taglanguage = config.get(section, "tag-language").strip().lower()  # Language to tag files
-        if len(self.taglanguage) > 2:
-            try:
-                babel = Language(self.taglanguage)
-                self.taglanguage = babel.alpha2
-            except:
-                log.exception("Unable to set tag language, defaulting to English.")
-                self.taglanguage = 'en'
-        elif len(self.taglanguage) < 2:
-            log.exception("Unable to set tag language, defaulting to English.")
-            self.taglanguage = 'en'
         self.artwork = config.get(section, "download-artwork").lower()  # Download and embed artwork
         if self.artwork == "poster":
             self.artwork = True
@@ -767,6 +737,28 @@ class ReadSettings:
         self.config = config
         self.configFile = configFile
 
+        # Read Permissions section information
+        section = "Permissions"
+        self.permissions = {}
+        self.permissions['chmod'] = config.get(section, 'chmod')
+        try:
+            self.permissions['chmod'] = int(self.permissions['chmod'], 8)
+        except:
+            log.exception("Invalid permissions, defaulting to 777.")
+            self.permissions['chmod'] = int("0755", 8)
+        self.permissions['uid'] = config.get(section, 'uid', vars=os.environ)
+        self.permissions['gid'] = config.get(section, 'gid', vars=os.environ)
+        try:
+            self.permissions['uid'] = int(self.permissions['uid'])
+        except:
+            self.permissions['uid'] = -1
+            log.exception("Invalid UID, defaulting to -1.")
+        try:
+            self.permissions['gid'] = int(self.permissions['gid'])
+        except:
+            self.permissions['gid'] = -1
+            log.exception("Invalid GID, defaulting to -1.")
+
     def getRefreshURL(self, tvdb_id):
         config = self.config
         section = "SickBeard"
@@ -786,12 +778,12 @@ class ReadSettings:
         return sickbeard_url
 
     def writeConfig(self, config, cfgfile):
-            fp = open(cfgfile, "w")
-            try:
-                config.write(fp)
-            except IOError:
-                pass
-            fp.close()
+        fp = open(cfgfile, "w")
+        try:
+            config.write(fp)
+        except IOError:
+            pass
+        fp.close()
 
     def raw(self, text):
         escape_dict = {'\a': r'\a',

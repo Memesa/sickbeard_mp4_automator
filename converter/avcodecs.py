@@ -46,6 +46,7 @@ class AudioCodec(BaseCodec):
       * samplerate (integer) - sample rate (frequency)
       * language (str) - language of audio stream (3 char code)
       * map (int) - stream index
+
     Supported audio codecs are: null (no audio), copy (copy from
     original), vorbis, aac, mp3, mp2
     """
@@ -138,6 +139,7 @@ class SubtitleCodec(BaseCodec):
       * codec (string) - subtitle codec name (mov_text, subrib, ssa only supported currently)
       * language (string) - language of subtitle stream (3 char code)
       * disposition (string) - disposition as string (+default+forced)
+
     Supported subtitle codecs are: null (no subtitle), mov_text
     """
 
@@ -212,12 +214,15 @@ class VideoCodec(BaseCodec):
             * pad - pad with black bars
       * src_width (int) - source width
       * src_height (int) - source height
+
     Aspect preserval mode is only used if both source
     and both destination sizes are specified. If source
     dimensions are not specified, aspect settings are ignored.
+
     If source dimensions are specified, and only one
     of the destination dimensions is specified, the other one
     is calculated to preserve the aspect ratio.
+
     Supported video codecs are: null (no video), copy (copy directly
     from the source), Theora, H.264/AVC, DivX, VP8, H.263, Flv,
     MPEG-1, MPEG-2.
@@ -312,6 +317,10 @@ class VideoCodec(BaseCodec):
             if crf < 0 or crf > 51:
                 del safe['crf']
 
+        if 'field_order' in safe:
+            if safe['field_order'] not in ['progressive', 'tt', 'bb', 'tb', 'bt']:
+                del safe['field_order']
+
         w = None
         h = None
 
@@ -364,7 +373,7 @@ class VideoCodec(BaseCodec):
         if 'pix_fmt' in safe:
             optlist.extend(['-pix_fmt', str(safe['pix_fmt'])])
         if 'field_order' in safe:
-            optlist.extend(['-field_order', str(safe['field_order'])])                                
+            optlist.extend(['-field_order', str(safe['field_order'])])
         if 'bitrate' in safe:
             optlist.extend(['-vb', str(safe['bitrate']) + 'k'])  # FIXED
         if 'crf' in safe:
@@ -707,7 +716,8 @@ class H264Codec(VideoCodec):
         'level': float,  # default: not-set, values range from 3.0 to 4.2
         'tune': str,  # default: not-set, for valid values see above link
         'wscale': int,  # special handlers for the even number requirements of h264
-        'hscale': int  # special handlers for the even number requirements of h264
+        'hscale': int,  # special handlers for the even number requirements of h264
+        'fps': int  # specify video fps
     })
 
     def parse_options(self, opt, stream=0):

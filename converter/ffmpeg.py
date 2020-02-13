@@ -22,10 +22,13 @@ class FFMpegConvertError(Exception):
         """
         @param    message: Error message.
         @type     message: C{str}
+
         @param    cmd: Full command string used to spawn ffmpeg.
         @type     cmd: C{str}
+
         @param    output: Full stdout output from the ffmpeg command.
         @type     output: C{str}
+
         @param    details: Optional error details.
         @type     details: C{str}
         """
@@ -127,6 +130,7 @@ class MediaStreamInfo(object):
         self.default = False
         self.metadata = {}
 
+    @property
     def toJson(self):
         language = self.metadata.get("language", "und").lower().strip()
         out = {'index': self.index,
@@ -144,6 +148,15 @@ class MediaStreamInfo(object):
             out['default'] = self.default
             out['language'] = language
         return out
+
+    @property
+    def disposition(self):
+        disposition = ''
+        if self.default:
+            disposition += '+default'
+        if self.forced:
+            disposition += '+forced'
+        return disposition
 
     @staticmethod
     def parse_float(val, default=0.0):
@@ -264,6 +277,7 @@ class MediaInfo(object):
     The attributes are:
       * format - a MediaFormatInfo object
       * streams - a list of MediaStreamInfo objects
+      * path - path to file
     """
 
     def __init__(self, posters_as_video=True):
@@ -274,13 +288,15 @@ class MediaInfo(object):
         self.format = MediaFormatInfo()
         self.posters_as_video = posters_as_video
         self.streams = []
+        self.path = None
 
+    @property
     def toJson(self):
         return {'format': self.format.format,
                 'format-fullname': self.format.fullname,
-                'video': self.video.toJson(),
-                'audio': [x.toJson() for x in self.audio],
-                'subtitle': [x.toJson() for x in self.subtitle]}
+                'video': self.video.toJson,
+                'audio': [x.toJson for x in self.audio],
+                'subtitle': [x.toJson for x in self.subtitle]}
 
     def parse_ffprobe(self, raw):
         """
@@ -357,6 +373,7 @@ class FFMpeg(object):
     """
     FFMPeg wrapper object, takes care of calling the ffmpeg binaries,
     passing options and parsing the output.
+
     >>> f = FFMpeg()
     """
     DEFAULT_JPEG_QUALITY = 4
@@ -413,6 +430,7 @@ class FFMpeg(object):
         Examine the media file and determine its format and media streams.
         Returns the MediaInfo object, or None if the specified file is
         not a valid media file.
+
         >>> info = FFMpeg().probe('test1.ogg')
         >>> info.format
         'ogg'
@@ -436,6 +454,7 @@ class FFMpeg(object):
             return None
 
         info = MediaInfo(posters_as_video)
+        info.path = fname
 
         p = self._spawn([self.ffprobe_path,
                          '-show_format', '-show_streams', fname])
@@ -471,18 +490,22 @@ class FFMpeg(object):
         """
         Convert the source media (infile) according to specified options
         (a list of ffmpeg switches as strings) and save it to outfile.
+
         Convert returns a generator that needs to be iterated to drive the
         conversion process. The generator will periodically yield timecode
         of currently processed part of the file (ie. at which second in the
         content is the conversion process currently).
+
         The optional timeout argument specifies how long should the operation
         be blocked in case ffmpeg gets stuck and doesn't report back. See
         the documentation in Converter.convert() for more details about this
         option.
+
         >>> conv = FFMpeg().convert('test.ogg', '/tmp/output.mp3',
         ...    ['-acodec libmp3lame', '-vn'])
         >>> for timecode in conv:
         ...    pass # can be used to inform the user about conversion progress
+
         """
         if os.name == 'nt':
             timeout = 0
@@ -588,6 +611,7 @@ class FFMpeg(object):
             If not specified, the video resolution is used.
         @param quality: quality of jpeg file in range 2(best)-31(worst)
             recommended range: 2-6
+
         >>> FFMpeg().thumbnail('test1.ogg', 5, '/tmp/shot.png', '320x240')
         """
         return self.thumbnails(fname, [(time, outfile, size, quality)])
@@ -598,6 +622,7 @@ class FFMpeg(object):
         @param option_list: a list of tuples like:
             (time, outfile, size=None, quality=DEFAULT_JPEG_QUALITY)
             see documentation of `converter.FFMpeg.thumbnail()` for details.
+
         >>> FFMpeg().thumbnails('test1.ogg', [(5, '/tmp/shot.png', '320x240'),
         >>>                                   (10, '/tmp/shot2.png', None, 5)])
         """

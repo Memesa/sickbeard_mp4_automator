@@ -20,7 +20,7 @@ def urlretrieve(url, fn):
 
 
 class Tvdb_mp4:
-    def __init__(self, show, season, episode, original=None, language='en', logger=None, tmdbid=False):
+    def __init__(self, show, season, episode, original=None, language=None, logger=None, tmdbid=False):
 
         tmdb.API_KEY = tmdb_api_key
 
@@ -39,6 +39,8 @@ class Tvdb_mp4:
                 show = find.tv_results[0]['id']
             except:
                 self.log.exception("Unable to convert TVDB to TMDB")
+
+        language = self.checkLanguage(language)
 
         for i in range(3):
             try:
@@ -88,12 +90,18 @@ class Tvdb_mp4:
         except:
             self.log.exception("Unable to important Language from babelfish [tag-language].")
             return None
-
+        if len(language) == 2:
+            try:
+                return Language.fromalpha2(language).alpha3
+                self.log.exception("Unable to set tag language [tag-language].")
+            except:
+                return None
         try:
             return Language(language).alpha3
         except:
             self.log.exception("Unable to set tag language [tag-language].")
             return None
+
     def writeTags(self, mp4Path, artwork=True, thumbnail=False):
         self.log.info("Tagging file: %s." % mp4Path)
         ext = os.path.splitext(mp4Path)[1][1:]
@@ -129,7 +137,7 @@ class Tvdb_mp4:
                     break
             checktags["\xa9gen"] = genre
             # video["\xa9gen"] = self.genre.replace('|', ',')[1:-1]  # Genre(s)
-        #checktags["----:com.apple.iTunes:iTunMOVI"] = self.xml  # XML - see xmlTags method
+        #checktags["----:com.apple.iTunes:iTunMOVI"] = self.xml.encode("UTF-8", errors="ignore")  # XML - see xmlTags method
         # video["----:com.apple.iTunes:iTunEXTC"] = self.setRating()  # iTunes content rating
 
         if artwork:
@@ -187,7 +195,7 @@ class Tvdb_mp4:
                         break
                 video["\xa9gen"] = genre
                 # video["\xa9gen"] = self.genre.replace('|', ',')[1:-1]  # Genre(s)
-            #video["----:com.apple.iTunes:iTunMOVI"] = self.xml  # XML - see xmlTags method
+            #video["----:com.apple.iTunes:iTunMOVI"] = self.xml.encode("UTF-8", errors="ignore")  # XML - see xmlTags method
             # video["----:com.apple.iTunes:iTunEXTC"] = self.setRating()  # iTunes content rating
 
             if artwork:
@@ -208,11 +216,11 @@ class Tvdb_mp4:
                     self.log.info("Trying to write tags.")
                     video.save()
                     self.log.info("Tags written successfully.")
-                    break
+                    return True
                 except IOError as e:
                     self.log.exception("There was a problem writing the tags. Retrying.")
                     time.sleep(5)
-        return False
+            return False
 
     def setHD(self, width, height):
         if width >= 1900 or height >= 1060:
@@ -266,25 +274,25 @@ class Tvdb_mp4:
         output.write(castheader)
         for a in self.credit['cast'][:5]:
             if a is not None and a['name'] is not None:
-                output.write("<dict><key>name</key><string>%s</string></dict>\n" % a['name'].encode('ascii', errors='ignore'))
+                output.write("<dict><key>name</key><string>%s</string></dict>\n" % a['name'])
         output.write(subfooter)
         # Write screenwriters
         output.write(writerheader)
         for w in [x for x in self.credit['crew'] if x['department'].lower() == "writing"][:5]:
             if w is not None:
-                output.write("<dict><key>name</key><string>%s</string></dict>\n" % w['name'].encode('ascii', 'ignore'))
+                output.write("<dict><key>name</key><string>%s</string></dict>\n" % w['name'])
         output.write(subfooter)
         # Write directors
         output.write(directorheader)
         for d in [x for x in self.credit['crew'] if x['department'].lower() == "directing"][:5]:
             if d is not None:
-                output.write("<dict><key>name</key><string>%s</string></dict>\n" % d['name'].encode('ascii', 'ignore'))
+                output.write("<dict><key>name</key><string>%s</string></dict>\n" % d['name'])
         output.write(subfooter)
         # Write producers
         output.write(producerheader)
         for p in [x for x in self.credit['crew'] if x['department'].lower() == "production"][:5]:
             if p is not None:
-                output.write("<dict><key>name</key><string>%s</string></dict>\n" % p['name'].encode('ascii', 'ignore'))
+                output.write("<dict><key>name</key><string>%s</string></dict>\n" % p['name'])
         output.write(subfooter)
 
         # Close XML

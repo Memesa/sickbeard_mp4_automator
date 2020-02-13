@@ -72,72 +72,68 @@ class Converter(object):
         if 'audio' not in opt and 'video' not in opt and 'subtitle' not in opt:
             raise ConverterError('Neither audio nor video nor subtitle streams requested')
 
-        if 'audio' not in opt:
-            opt['audio'] = {'codec': None}
-
-        if 'subtitle' not in opt:
-            opt['subtitle'] = {'codec': None}
-
         # Audio
-        y = opt['audio']
+        if 'audio' in opt:
+            y = opt['audio']
 
-        # Creates the new nested dictionary to preserve backwards compatability
-        try:
-            first = list(y.values())[0]
-            if not isinstance(first, dict):
-                y = {0: y}
-        except IndexError:
-            pass
+            # Creates the new nested dictionary to preserve backwards compatability
+            try:
+                first = list(y.values())[0]
+                if not isinstance(first, dict):
+                    y = {0: y}
+            except IndexError:
+                pass
 
-        for n in y:
-            x = y[n]
+            for n in y:
+                x = y[n]
 
-            if not isinstance(x, dict) or 'codec' not in x:
-                raise ConverterError('Invalid audio codec specification')
+                if not isinstance(x, dict) or 'codec' not in x:
+                    raise ConverterError('Invalid audio codec specification')
 
-            if 'path' in x and 'source' not in x:
-                raise ConverterError('Cannot specify audio path without FFMPEG source number')
+                if 'path' in x and 'source' not in x:
+                    raise ConverterError('Cannot specify audio path without FFMPEG source number')
 
-            if 'source' in x and 'path' not in x:
-                raise ConverterError('Cannot specify alternate input source without a path')
+                if 'source' in x and 'path' not in x:
+                    raise ConverterError('Cannot specify alternate input source without a path')
 
-            c = x['codec']
-            if c not in self.audio_codecs:
-                raise ConverterError('Requested unknown audio codec ' + str(c))
+                c = x['codec']
+                if c not in self.audio_codecs:
+                    raise ConverterError('Requested unknown audio codec ' + str(c))
 
-            audio_options.extend(self.audio_codecs[c]().parse_options(x, n))
-            if audio_options is None:
-                raise ConverterError('Unknown audio codec error')
+                audio_options.extend(self.audio_codecs[c]().parse_options(x, n))
+                if audio_options is None:
+                    raise ConverterError('Unknown audio codec error')
 
         # Subtitle
-        y = opt['subtitle']
+        if 'subtitle' in opt:
+            y = opt['subtitle']
 
-        # Creates the new nested dictionary to preserve backwards compatability
-        try:
-            first = list(y.values())[0]
-            if not isinstance(first, dict):
-                y = {0: y}
-        except IndexError:
-            pass
+            # Creates the new nested dictionary to preserve backwards compatability
+            try:
+                first = list(y.values())[0]
+                if not isinstance(first, dict):
+                    y = {0: y}
+            except IndexError:
+                pass
 
-        for n in y:
-            x = y[n]
-            if not isinstance(x, dict) or 'codec' not in x:
-                raise ConverterError('Invalid subtitle codec specification')
+            for n in y:
+                x = y[n]
+                if not isinstance(x, dict) or 'codec' not in x:
+                    raise ConverterError('Invalid subtitle codec specification')
 
-            if 'path' in x and 'source' not in x:
-                raise ConverterError('Cannot specify subtitle path without FFMPEG source number')
+                if 'path' in x and 'source' not in x:
+                    raise ConverterError('Cannot specify subtitle path without FFMPEG source number')
 
-            if 'source' in x and 'path' not in x:
-                raise ConverterError('Cannot specify alternate input source without a path')
+                if 'source' in x and 'path' not in x:
+                    raise ConverterError('Cannot specify alternate input source without a path')
 
-            c = x['codec']
-            if c not in self.subtitle_codecs:
-                raise ConverterError('Requested unknown subtitle codec ' + str(c))
+                c = x['codec']
+                if c not in self.subtitle_codecs:
+                    raise ConverterError('Requested unknown subtitle codec ' + str(c))
 
-            subtitle_options.extend(self.subtitle_codecs[c]().parse_options(x, n))
-            if subtitle_options is None:
-                raise ConverterError('Unknown subtitle codec error')
+                subtitle_options.extend(self.subtitle_codecs[c]().parse_options(x, n))
+                if subtitle_options is None:
+                    raise ConverterError('Unknown subtitle codec error')
 
         if 'video' in opt:
             x = opt['video']
@@ -215,8 +211,8 @@ class Converter(object):
         if info is None:
             raise ConverterError("Can't get information about source file")
 
-        if not info.video and not info.audio:
-            raise ConverterError('Source file has no audio or video streams')
+        if not info.video and not info.audio and not info.subtitle:
+            raise ConverterError('Source file has no audio, video, or subtitle streams')
 
         if info.video and 'video' in options:
             options = options.copy()
@@ -224,7 +220,10 @@ class Converter(object):
             v['src_width'] = info.video.video_width
             v['src_height'] = info.video.video_height
 
-        if info.format.duration < 0.01:
+        if not info.format.duration:
+            info.format.duration = 0.01
+
+        if info.video and info.format.duration < 0.01:
             raise ConverterError('Zero-length media')
 
         if twopass:
