@@ -1016,7 +1016,7 @@ class MkvtoMp4:
                         x, lang = os.path.splitext(x)
                     lang = lang[1:]
                     # Using bablefish to convert a 2 language code to a 3 language code
-                    if len(lang) is 2:
+                    if len(lang) == 2:
                         try:
                             babel = Language.fromalpha2(lang)
                             lang = babel.alpha3
@@ -1051,10 +1051,13 @@ class MkvtoMp4:
         languages = set()
         if self.swl:
             for alpha3 in self.swl:
-                try:
-                    languages.add(Language(alpha3))
-                except:
-                    self.log.exception("Unable to add language for download with subliminal.")
+                if os.path.exists(os.path.abspath(inputfile)[:-4] + "." + Language(alpha3).alpha2 + ".srt"):
+                    print("Skipping subtitle language file " + alpha3 + "because it already exists")
+                else:
+                    try:
+                        languages.add(Language(alpha3))
+                    except:
+                        self.log.exception("Unable to add language for download with subliminal.")
         if self.sdl:
             try:
                 languages.add(Language(self.sdl))
@@ -1065,6 +1068,7 @@ class MkvtoMp4:
             self.log.error("No valid subtitle download languages detected, subtitles will not be downloaded.")
             return
 
+        
         self.log.info("Attempting to download subtitles.")
 
         # Attempt to set the dogpile cache
